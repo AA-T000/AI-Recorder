@@ -1,10 +1,11 @@
-"""HTML 仪表盘输出。"""
+"""HTML 仪表盘输出 — WebGL 流光背景。"""
 
 import os
-from datetime import date, datetime
+from datetime import date
 from typing import Optional
 
 from config.settings import REPORTS_DIR
+from core.analyzer import CATEGORY_NAMES, CATEGORY_ICONS
 
 
 def save_html_report(report_data: dict, target_date: Optional[date] = None) -> Optional[str]:
@@ -19,132 +20,718 @@ def save_html_report(report_data: dict, target_date: Optional[date] = None) -> O
     ai_report = report_data.get("ai_report", "")
     success = report_data.get("success", False)
 
-    # 准备数据
-    categories_html = ""
-    if analysis.get("category_stats"):
-        for cat in analysis["category_stats"]:
-            color = _get_category_color(cat["category"])
-            categories_html += f"""
-            <div class="cat-bar">
-                <span class="cat-name">{cat['icon']} {cat['name']}</span>
-                <div class="bar-track">
-                    <div class="bar-fill" style="width:{cat['percentage']}%;background:{color}"></div>
-                </div>
-                <span class="cat-val">{cat['percentage']}% ({cat['seconds']//60}min)</span>
-            </div>"""
-
-    timeline_html = ""
-    for block in analysis.get("timeline", [])[:50]:
-        start = block["start"].strftime("%H:%M")
-        duration_min = block.get("duration", 0) // 60
-        icon = _get_icon(block["category"])
-        color = _get_category_color(block["category"])
-        timeline_html += f"""
-        <div class="tl-block" style="border-left-color:{color}">
-            <span class="tl-time">{start}</span>
-            <span class="tl-icon">{icon}</span>
-            <span class="tl-app">{block['app']}</span>
-            <span class="tl-duration">{duration_min}m</span>
-        </div>"""
-
-    holes_html = ""
-    if analysis.get("holes"):
-        for hole in analysis["holes"]:
-            sev_class = hole["severity"]
-            holes_html += f"""
-            <div class="hole-card {sev_class}">
-                <strong>{hole['title']}</strong>
-                <p>{hole['detail']}</p>
-                <em>建议: {hole['suggestion']}</em>
-            </div>"""
-    else:
-        holes_html = "<p style='color:#4ade80'>✅ 未发现明显的时间黑洞</p>"
-
     eff = analysis.get("efficiency", 0)
     eff_color = "#4ade80" if eff >= 70 else "#fbbf24" if eff >= 40 else "#f87171"
+    categories_html = _build_categories_html(analysis.get("category_stats", []))
+    timeline_html = _build_timeline_html(analysis.get("timeline", []))
+    holes_html = _build_holes_html(analysis.get("holes", []))
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📊 {target_date} 工作日报</title>
+<title>📊 {target_date} 工作日报 — AI Recorder</title>
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-       background:#0f0f0f; color:#e5e5e5; padding:24px; max-width:900px; margin:0 auto; }}
-h1 {{ font-size:28px; margin-bottom:8px; }}
-.subtitle {{ color:#888; margin-bottom:24px; }}
-.score {{ display:inline-block; font-size:48px; font-weight:bold; color:{eff_color};
-          border:3px solid {eff_color}; border-radius:12px; padding:8px 24px; margin:16px 0; }}
-.section {{ margin:24px 0; }}
-.section-title {{ font-size:18px; font-weight:bold; margin-bottom:12px;
-                  border-bottom:1px solid #333; padding-bottom:6px; }}
-.cat-bar {{ display:flex; align-items:center; margin:6px 0; gap:12px; }}
-.cat-name {{ width:80px; font-size:14px; white-space:nowrap; }}
-.bar-track {{ flex:1; height:20px; background:#1a1a1a; border-radius:4px; overflow:hidden; }}
-.bar-fill {{ height:100%; border-radius:4px; transition:width 0.5s; }}
-.cat-val {{ width:100px; font-size:13px; color:#888; text-align:right; }}
-.tl-block {{ display:flex; align-items:center; gap:10px; padding:6px 10px;
-             margin:2px 0; border-left:3px solid #555; background:#1a1a1a;
-             border-radius:0 4px 4px 0; font-size:13px; }}
-.tl-time {{ color:#888; width:45px; }}
-.tl-icon {{ width:20px; }}
-.tl-app {{ flex:1; }}
-.tl-duration {{ color:#888; width:40px; text-align:right; }}
-.hole-card {{ background:#1a1a1a; border-radius:8px; padding:12px; margin:8px 0; }}
-.hole-card.warning {{ border-left:3px solid #f87171; }}
-.hole-card.info {{ border-left:3px solid #60a5fa; }}
-.hole-card p {{ margin:4px 0; }}
-.ai-section {{ background:#1a1a1a; border-radius:8px; padding:16px; margin:16px 0;
-              white-space:pre-wrap; line-height:1.7; font-size:14px; }}
-.stats-row {{ display:flex; gap:16px; margin:12px 0; flex-wrap:wrap; }}
-.stat-card {{ background:#1a1a1a; border-radius:8px; padding:12px 16px; flex:1; min-width:120px; }}
-.stat-label {{ font-size:12px; color:#888; }}
-.stat-value {{ font-size:20px; font-weight:bold; margin-top:4px; }}
+html {{ scroll-behavior: smooth; }}
+body {{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #000;
+    color: #e5e5e5;
+    overflow-x: hidden;
+}}
+
+/* ===== WebGL 背景 ===== */
+#wgsl-bg {{
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    z-index: 0;
+}}
+#wgsl-bg canvas {{
+    width: 100%; height: 100%;
+    display: block;
+}}
+
+/* ===== 遮罩层 ===== */
+.page-overlay {{
+    position: relative;
+    z-index: 1;
+    background: radial-gradient(ellipse at 50% 0%, rgba(10,5,30,0.3) 0%, rgba(0,0,0,0.8) 60%);
+    min-height: 100vh;
+}}
+
+/* ===== 主容器 ===== */
+.container {{
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+}}
+
+/* ===== 头部 ===== */
+.header {{ margin-bottom: 32px; }}
+.header h1 {{
+    font-size: 34px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 40%, #f472b6 80%, #fb923c 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    background-size: 200% 200%;
+    animation: gradientShift 6s ease infinite;
+}}
+@keyframes gradientShift {{
+    0%, 100% {{ background-position: 0% 50%; }}
+    50% {{ background-position: 100% 50%; }}
+}}
+.header .subtitle {{
+    color: rgba(255,255,255,0.3);
+    font-size: 13px;
+    margin-top: 6px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}}
+
+/* ===== 效率评分 ===== */
+.score-card {{
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: rgba(255,255,255,0.04);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 20px;
+    padding: 24px 32px;
+    margin: 24px 0 32px;
+    width: fit-content;
+}}
+.score-num {{
+    font-size: 56px;
+    font-weight: 900;
+    color: {eff_color};
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 30px {eff_color}44;
+}}
+.score-meta {{ flex: 1; }}
+.score-label {{ font-size: 13px; color: rgba(255,255,255,0.4); margin-bottom: 8px; }}
+.score-bar-track {{
+    width: 160px; height: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+    overflow: hidden;
+}}
+.score-bar-fill {{
+    height: 100%;
+    width: {eff}%;
+    background: {eff_color};
+    border-radius: 3px;
+    box-shadow: 0 0 10px {eff_color}88;
+    transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+}}
+
+/* ===== 统计网格 ===== */
+.stats-grid {{
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 36px;
+}}
+.stat-card {{
+    background: rgba(255,255,255,0.03);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 14px;
+    padding: 18px 16px;
+    text-align: center;
+    transition: all 0.3s ease;
+}}
+.stat-card:hover {{
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.12);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 32px rgba(96,165,250,0.1);
+}}
+.stat-card .label {{
+    font-size: 11px;
+    color: rgba(255,255,255,0.35);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 8px;
+}}
+.stat-card .value {{
+    font-size: 24px;
+    font-weight: 700;
+    color: #f0f0f0;
+    font-variant-numeric: tabular-nums;
+}}
+
+/* ===== 分区 ===== */
+.section {{ margin: 32px 0; }}
+.section-header {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+}}
+.section-icon {{
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, rgba(96,165,250,0.2), rgba(167,139,250,0.2));
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}}
+.section-title {{
+    font-size: 17px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.8);
+}}
+
+/* ===== 时间分布 ===== */
+.cat-bar {{
+    display: flex;
+    align-items: center;
+    margin: 10px 0;
+    gap: 12px;
+}}
+.cat-name {{
+    width: 70px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.6);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}}
+.cat-dot {{
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}}
+.bar-track {{
+    flex: 1;
+    height: 28px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+}}
+.bar-fill {{
+    height: 100%;
+    border-radius: 8px;
+    transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+    position: relative;
+}}
+.bar-fill::after {{
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%);
+    animation: barShimmer 2.5s ease-in-out infinite;
+}}
+@keyframes barShimmer {{
+    0%, 100% {{ transform: translateX(-100%); }}
+    50% {{ transform: translateX(100%); }}
+}}
+.cat-val {{
+    width: 100px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.45);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}}
+
+/* ===== 时间线 ===== */
+.tl-block {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    margin: 4px 0;
+    border-radius: 10px;
+    font-size: 13px;
+    transition: background 0.2s;
+}}
+.tl-block:hover {{ background: rgba(255,255,255,0.04); }}
+.tl-line {{
+    width: 3px;
+    height: 32px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}}
+.tl-time {{
+    color: rgba(255,255,255,0.35);
+    width: 45px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}}
+.tl-app {{ flex: 1; color: rgba(255,255,255,0.75); }}
+.tl-duration {{
+    color: rgba(255,255,255,0.3);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}}
+
+/* ===== 时间黑洞 ===== */
+.hole-card {{
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin: 8px 0;
+    border-left: 3px solid #555;
+    transition: background 0.2s;
+}}
+.hole-card:hover {{ background: rgba(255,255,255,0.05); }}
+.hole-card.warning {{ border-left-color: #f87171; }}
+.hole-card.info {{ border-left-color: #60a5fa; }}
+.hole-card strong {{ font-size: 14px; color: #f0f0f0; }}
+.hole-card p {{ margin: 4px 0; font-size: 13px; color: rgba(255,255,255,0.55); }}
+.hole-card em {{ font-size: 12px; color: rgba(255,255,255,0.35); }}
+
+/* ===== AI 报告 ===== */
+.ai-section {{
+    background: rgba(255,255,255,0.03);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 14px;
+    padding: 20px;
+    margin: 16px 0;
+    white-space: pre-wrap;
+    line-height: 1.8;
+    font-size: 14px;
+    color: rgba(255,255,255,0.75);
+}}
+
+/* ===== 空状态 ===== */
+.empty-state {{
+    text-align: center;
+    padding: 32px 20px;
+    color: rgba(255,255,255,0.25);
+    font-size: 14px;
+}}
+
+/* ===== 页脚 ===== */
+.footer {{
+    text-align: center;
+    padding: 40px 0 20px;
+    color: rgba(255,255,255,0.15);
+    font-size: 12px;
+    letter-spacing: 1px;
+}}
+
+/* ===== 响应式 ===== */
+@media (max-width: 640px) {{
+    .container {{ padding: 24px 16px 60px; }}
+    .header h1 {{ font-size: 24px; }}
+    .score-card {{ padding: 18px 20px; flex-direction: column; align-items: flex-start; }}
+    .score-num {{ font-size: 42px; }}
+    .stats-grid {{ grid-template-columns: repeat(2, 1fr); }}
+    .stat-card .value {{ font-size: 20px; }}
+    .cat-val {{ width: 70px; font-size: 12px; }}
+    .cat-name {{ width: 55px; font-size: 12px; }}
+}}
+
+@media (prefers-reduced-motion: reduce) {{
+    .header h1 {{ animation: none; }}
+    .bar-fill::after {{ animation: none; }}
+    .stat-card {{ transition: none; }}
+}}
 </style>
 </head>
 <body>
-<h1>📊 {target_date} 工作日报</h1>
-<p class="subtitle">AI Recorder · 自动生成</p>
 
-<div class="score">{eff}</div>
+<!-- WebGL 流光背景 -->
+<div id="wgsl-bg"></div>
 
-<div class="stats-row">
-    <div class="stat-card">
-        <div class="stat-label">最早活动</div>
-        <div class="stat-value">{analysis.get('earliest', '?')}</div>
+<div class="page-overlay">
+<div class="container">
+
+    <div class="header">
+        <h1>📊 {target_date} 工作日报</h1>
+        <p class="subtitle">AI Recorder · 自动生成</p>
     </div>
-    <div class="stat-card">
-        <div class="stat-label">最晚活动</div>
-        <div class="stat-value">{analysis.get('latest', '?')}</div>
+
+    <div class="score-card">
+        <div class="score-num">{eff}</div>
+        <div class="score-meta">
+            <div class="score-label">效率评分</div>
+            <div class="score-bar-track"><div class="score-bar-fill"></div></div>
+        </div>
     </div>
-    <div class="stat-card">
-        <div class="stat-label">总时长</div>
-        <div class="stat-value">{analysis.get('work_duration', 0)//60} 分钟</div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="label">最早活动</div>
+            <div class="value">{analysis.get('earliest', '?')}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">最晚活动</div>
+            <div class="value">{analysis.get('latest', '?')}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">总时长</div>
+            <div class="value">{analysis.get('work_duration', 0)//60} 分钟</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">记录数</div>
+            <div class="value">{analysis.get('record_count', 0)}</div>
+        </div>
     </div>
-    <div class="stat-card">
-        <div class="stat-label">记录数</div>
-        <div class="stat-value">{analysis.get('record_count', 0)}</div>
+
+    <div class="section">
+        <div class="section-header">
+            <div class="section-icon">⏰</div>
+            <div class="section-title">时间分布</div>
+        </div>
+        {categories_html if categories_html else '<div class="empty-state">暂无数据</div>'}
     </div>
+
+    <div class="section">
+        <div class="section-header">
+            <div class="section-icon">📋</div>
+            <div class="section-title">时间线</div>
+        </div>
+        {timeline_html if timeline_html else '<div class="empty-state">暂无数据</div>'}
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <div class="section-icon">🔍</div>
+            <div class="section-title">时间黑洞报告</div>
+        </div>
+        {holes_html if holes_html else '<div class="empty-state">✅ 未发现明显的时间黑洞，今天很专注！</div>'}
+    </div>
+
+    {f'<div class="section"><div class="section-header"><div class="section-icon">🤖</div><div class="section-title">AI 分析</div></div><div class="ai-section">{ai_report}</div></div>' if ai_report else ''}
+
+    <div class="footer">AI Recorder · 你的智能工作伙伴</div>
+
+</div>
 </div>
 
-<div class="section">
-    <div class="section-title">⏰ 时间分布</div>
-    {categories_html if categories_html else '<p>暂无数据</p>'}
-</div>
+<script>
+// ===== WebGL 流光背景 (基于 OGL Lightfall 着色器) =====
+(function() {{
+    var container = document.getElementById('wgsl-bg');
+    if (!container) return;
 
-<div class="section">
-    <div class="section-title">📋 时间线</div>
-    {timeline_html if timeline_html else '<p>暂无数据</p>'}
-</div>
+    // 性能检测
+    var isLowEnd = false;
+    try {{
+        var mem = navigator.deviceMemory || 4;
+        var cores = navigator.hardwareConcurrency || 4;
+        if (mem <= 2 || cores <= 2) isLowEnd = true;
+    }} catch(e) {{}}
 
-<div class="section">
-    <div class="section-title">🔍 时间黑洞报告</div>
-    {holes_html}
-</div>
+    // 颜色调色板
+    var colors = [
+        [0.65, 0.78, 1.0],   // #A6C8FF - 浅蓝
+        [0.32, 0.15, 1.0],   // #5227FF - 深蓝紫
+        [1.0, 0.63, 0.98],   // #FF9FFC - 粉色
+    ];
 
-{f'<div class="section"><div class="section-title">🤖 AI 分析</div><div class="ai-section">{ai_report}</div></div>' if ai_report else ''}
+    var bgColor = [0.04, 0.02, 0.12];  // 深紫黑背景
+
+    // 创建 WebGL 上下文
+    var canvas = document.createElement('canvas');
+    container.appendChild(canvas);
+    var gl = canvas.getContext('webgl', {{ alpha: true, antialias: !isLowEnd }});
+    if (!gl) {{
+        // WebGL 不可用，回退到纯色背景
+        canvas.style.display = 'none';
+        container.style.background = 'linear-gradient(135deg, #0a0a2e 0%, #1a0a2e 50%, #0a1a2e 100%)';
+        return;
+    }}
+
+    // 着色器源码 (基于 Lightfall fragment shader 简化版)
+    var vertSrc = `
+        attribute vec2 position;
+        attribute vec2 uv;
+        varying vec2 vUv;
+        void main() {{
+            vUv = uv;
+            gl_Position = vec4(position, 0.0, 1.0);
+        }}
+    `;
+
+    var fragSrc = `
+        precision highp float;
+        uniform vec3  iResolution;
+        uniform vec2  iMouse;
+        uniform float iTime;
+        uniform vec3  uColor0;
+        uniform vec3  uColor1;
+        uniform vec3  uColor2;
+        uniform vec3  uBgColor;
+        uniform float uSpeed;
+        uniform int   uStreakCount;
+        uniform float uStreakWidth;
+        uniform float uStreakLength;
+        uniform float uGlow;
+        uniform float uDensity;
+        uniform float uTwinkle;
+        uniform float uZoom;
+        uniform float uBgGlow;
+        uniform float uMouseEnabled;
+        uniform float uMouseStrength;
+        uniform float uMouseRadius;
+        varying vec2 vUv;
+
+        vec3 palette(float h) {{
+            if (h < 0.333) return uColor0;
+            if (h < 0.666) return uColor1;
+            return uColor2;
+        }}
+
+        vec3 tanhv(vec3 x) {{
+            vec3 e = exp(-2.0 * x);
+            return (1.0 - e) / (1.0 + e);
+        }}
+
+        vec2 sceneC(vec2 frag, vec2 r) {{
+            vec2 P = (frag + frag - r) / r.x;
+            float z = 0.0;
+            float d = 1e3;
+            vec4 O = vec4(0.0);
+            for (int k = 0; k < 39; k++) {{
+                if (d <= 1e-4) break;
+                O = z * normalize(vec4(P, uZoom, 0.0)) - vec4(0.0, 4.0, 1.0, 0.0) / 4.5;
+                d = 1.0 - sqrt(length(O * O));
+                z += d;
+            }}
+            return vec2(O.x, atan(O.z, O.y));
+        }}
+
+        void mainImage(out vec4 o, vec2 C) {{
+            vec2 r = iResolution.xy;
+            vec2 uv0 = (C + C - r) / r.x;
+            float T = 0.1 * iTime * uSpeed + 9.0;
+            float angRings = max(1.0, floor(6.28318530718 * max(uDensity, 0.05) + 0.5));
+            vec2 Y = vec2(5e-3, 6.28318530718 / angRings);
+
+            vec2 c0 = sceneC(C, r);
+            vec2 cdx = sceneC(C + vec2(1.0, 0.0), r);
+            vec2 cdy = sceneC(C + vec2(0.0, 1.0), r);
+            vec2 dCx = cdx - c0;
+            vec2 dCy = cdy - c0;
+            dCx.y -= 6.28318530718 * floor(dCx.y / 6.28318530718 + 0.5);
+            dCy.y -= 6.28318530718 * floor(dCy.y / 6.28318530718 + 0.5);
+            vec2 fw = abs(dCx) + abs(dCy);
+            C = c0;
+
+            vec2 P = vec2(2.0, 1.0) * uv0 - (r / r.x) * vec2(0.0, 1.0);
+            vec4 O = vec4(uBgColor * 90.0 * uBgGlow / (1e3 * dot(P, P) + 6.0), 0.0);
+
+            float mGlow = 0.0;
+            if (uMouseEnabled > 0.5) {{
+                vec2 mN = (iMouse + iMouse - r) / r.x;
+                float md = length(uv0 - mN);
+                mGlow = exp(-md * md / max(uMouseRadius * uMouseRadius, 1e-4)) * uMouseStrength;
+                O.rgb += uColor0 * mGlow * 0.25;
+            }}
+
+            float zr = 5e-4 * uStreakWidth;
+            vec2 rr = vec2(max(length(fw), 1e-5));
+            float tail = 19.0 / max(uStreakLength, 0.05);
+
+            for (int m = 0; m < 16; m++) {{
+                if (m >= uStreakCount) break;
+                float jf = float(m) + 1.0;
+                float ic = fract(sin(dot(vec2(jf, floor(C.x / Y.x + 0.5)), vec2(7.0, 11.0)) * 73.0));
+                vec2 Pp = C - (T + T * ic) * vec2(0.0, 1.0);
+                Pp -= floor(Pp / Y + 0.5) * Y;
+                float h = fract(8663.0 * ic);
+                vec3 col = palette(h);
+                float weight = mix(1.5, 1.0 + sin(T + 7.0 * h + 4.0), uTwinkle);
+                weight *= (1.0 + mGlow * 2.0);
+                vec2 inner = vec2(length(max(Pp, vec2(-1.0, 0.0))), length(Pp) - zr) - zr;
+                vec2 sm = vec2(1.0) - smoothstep(-rr, rr, inner);
+                O.rgb += dot(sm, vec2(exp(tail * Pp.y), 3.0)) * col * weight;
+                C.x += Y.x / 8.0;
+            }}
+
+            vec3 colr = sqrt(tanhv(max(O.rgb * uGlow - vec3(0.04, 0.08, 0.02), 0.0)));
+            o = vec4(colr, 1.0);
+        }}
+
+        void main() {{
+            vec4 color;
+            mainImage(color, vUv * iResolution.xy);
+            gl_FragColor = color;
+        }}
+    `;
+
+    // 编译着色器
+    function compileShader(src, type) {{
+        var shader = gl.createShader(type);
+        gl.shaderSource(shader, src);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {{
+            console.warn('Shader compile failed:', gl.getShaderInfoLog(shader));
+            return null;
+        }}
+        return shader;
+    }}
+
+    var vert = compileShader(vertSrc, gl.VERTEX_SHADER);
+    var frag = compileShader(fragSrc, gl.FRAGMENT_SHADER);
+    if (!vert || !frag) {{
+        container.style.background = 'linear-gradient(135deg, #0a0a2e 0%, #1a0a2e 50%, #0a1a2e 100%)';
+        return;
+    }}
+
+    var program = gl.createProgram();
+    gl.attachShader(program, vert);
+    gl.attachShader(program, frag);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {{
+        console.warn('Program link failed:', gl.getProgramInfoLog(program));
+        container.style.background = 'linear-gradient(135deg, #0a0a2e 0%, #1a0a2e 50%, #0a1a2e 100%)';
+        return;
+    }}
+    gl.useProgram(program);
+
+    // 创建全屏三角形
+    var positions = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+    var uvs = new Float32Array([0,0, 1,0, 0,1, 1,1]);
+    var posBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+    var posLoc = gl.getAttribLocation(program, 'position');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    var uvBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
+    var uvLoc = gl.getAttribLocation(program, 'uv');
+    gl.enableVertexAttribArray(uvLoc);
+    gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 0, 0);
+
+    // Uniforms
+    var locs = {{}};
+    var uniformNames = [
+        'iResolution','iMouse','iTime',
+        'uColor0','uColor1','uColor2',
+        'uBgColor','uSpeed','uStreakCount','uStreakWidth',
+        'uStreakLength','uGlow','uDensity','uTwinkle',
+        'uZoom','uBgGlow','uMouseEnabled','uMouseStrength','uMouseRadius'
+    ];
+    for (var i = 0; i < uniformNames.length; i++) {{
+        locs[uniformNames[i]] = gl.getUniformLocation(program, uniformNames[i]);
+    }}
+
+    // 参数
+    var params = {{
+        speed: 0.5,
+        streakCount: 2,
+        streakWidth: 1,
+        streakLength: 1,
+        glow: 1,
+        density: 0.6,
+        twinkle: 1,
+        zoom: 3,
+        bgGlow: 0.5,
+        mouseEnabled: 1,
+        mouseStrength: 0.5,
+        mouseRadius: 1,
+        mouseDampening: 0.15,
+    }};
+
+    // 鼠标
+    var mouseTarget = [0, 0];
+    var mouseCurrent = [0, 0];
+    var lastTime = 0;
+
+    canvas.addEventListener('mousemove', function(e) {{
+        var rect = canvas.getBoundingClientRect();
+        var scaleX = canvas.width / rect.width;
+        var scaleY = canvas.height / rect.height;
+        mouseTarget[0] = (e.clientX - rect.left) * scaleX;
+        mouseTarget[1] = (rect.height - (e.clientY - rect.top)) * scaleY;
+    }});
+    canvas.addEventListener('mouseleave', function() {{
+        mouseTarget[0] = 0;
+        mouseTarget[1] = 0;
+    }});
+    canvas.addEventListener('touchmove', function(e) {{
+        var t = e.touches[0];
+        var rect = canvas.getBoundingClientRect();
+        var scaleX = canvas.width / rect.width;
+        var scaleY = canvas.height / rect.height;
+        mouseTarget[0] = (t.clientX - rect.left) * scaleX;
+        mouseTarget[1] = (rect.height - (t.clientY - rect.top)) * scaleY;
+    }}, {{ passive: true }});
+
+    // 调整大小
+    function resize() {{
+        var rect = container.getBoundingClientRect();
+        var w = Math.floor(rect.width * (isLowEnd ? 1 : 2));
+        var h = Math.floor(rect.height * (isLowEnd ? 1 : 2));
+        canvas.width = w;
+        canvas.height = h;
+        gl.viewport(0, 0, w, h);
+        gl.uniform3f(locs.iResolution, w, h, 1);
+    }}
+    resize();
+    var ro = new ResizeObserver(resize);
+    ro.observe(container);
+
+    // 动画循环
+    function animate(time) {{
+        requestAnimationFrame(animate);
+
+        // 节流
+        if (time - lastTime < 33) return; // ~30fps
+        lastTime = time;
+
+        gl.uniform1f(locs.iTime, time * 0.001);
+
+        // 鼠标平滑跟随
+        var tau = Math.max(0.001, params.mouseDampening);
+        var dt = 0.016;
+        var factor = 1 - Math.exp(-dt / tau);
+        mouseCurrent[0] += (mouseTarget[0] - mouseCurrent[0]) * factor;
+        mouseCurrent[1] += (mouseTarget[1] - mouseCurrent[1]) * factor;
+        gl.uniform2fv(locs.iMouse, mouseCurrent);
+
+        // 颜色
+        gl.uniform3fv(locs.uColor0, colors[0]);
+        gl.uniform3fv(locs.uColor1, colors[1]);
+        gl.uniform3fv(locs.uColor2, colors[2]);
+        gl.uniform3fv(locs.uBgColor, bgColor);
+
+        // 参数
+        gl.uniform1f(locs.uSpeed, params.speed);
+        gl.uniform1i(locs.uStreakCount, params.streakCount);
+        gl.uniform1f(locs.uStreakWidth, params.streakWidth);
+        gl.uniform1f(locs.uStreakLength, params.streakLength);
+        gl.uniform1f(locs.uGlow, params.glow);
+        gl.uniform1f(locs.uDensity, params.density);
+        gl.uniform1f(locs.uTwinkle, params.twinkle);
+        gl.uniform1f(locs.uZoom, params.zoom);
+        gl.uniform1f(locs.uBgGlow, params.bgGlow);
+        gl.uniform1f(locs.uMouseEnabled, params.mouseEnabled);
+        gl.uniform1f(locs.uMouseStrength, params.mouseStrength);
+        gl.uniform1f(locs.uMouseRadius, params.mouseRadius);
+
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }}
+    requestAnimationFrame(animate);
+
+    // 页面不可见时暂停
+    document.addEventListener('visibilitychange', function() {{
+        if (document.hidden) {{
+            cancelAnimationFrame(animate);
+        }}
+    }});
+}})();
+</script>
 
 </body>
 </html>"""
@@ -153,6 +740,62 @@ h1 {{ font-size:28px; margin-bottom:8px; }}
         f.write(html)
 
     return filepath
+
+
+def _build_categories_html(stats: list) -> str:
+    if not stats:
+        return ""
+    html = ""
+    for cat in stats:
+        color = _get_category_color(cat["category"])
+        html += f"""
+        <div class="cat-bar">
+            <span class="cat-name"><span class="cat-dot" style="background:{color}"></span>{cat['name']}</span>
+            <div class="bar-track">
+                <div class="bar-fill" style="width:{cat['percentage']}%;background:linear-gradient(90deg,{color}cc,{color})"></div>
+            </div>
+            <span class="cat-val">{cat['percentage']}% ({cat['seconds']//60}min)</span>
+        </div>"""
+    return html
+
+
+def _build_timeline_html(timeline: list) -> str:
+    if not timeline:
+        return ""
+    html = ""
+    for block in timeline:
+        start = block["start"].strftime("%H:%M") if hasattr(block["start"], "strftime") else str(block["start"])
+        end = block["end"].strftime("%H:%M") if hasattr(block["end"], "strftime") else ""
+        duration_min = block.get("duration", 0) // 60
+        color = _get_category_color(block["category"])
+        icon = CATEGORY_ICONS.get(block["category"], "⬜")
+        name = CATEGORY_NAMES.get(block["category"], block["category"])
+        apps = block.get("app_names", [])
+        apps_str = ", ".join(apps[:2]) if isinstance(apps, list) else apps
+        html += f"""
+        <div class="tl-block">
+            <div class="tl-line" style="background:linear-gradient(180deg,{color},{color}44)"></div>
+            <span class="tl-time">{start}{f'-{end}' if end else ''}</span>
+            <span class="tl-icon">{icon}</span>
+            <span class="tl-app">{name} ({apps_str})</span>
+            <span class="tl-duration">{duration_min}m</span>
+        </div>"""
+    return html
+
+
+def _build_holes_html(holes: list) -> str:
+    if not holes:
+        return ""
+    html = ""
+    for hole in holes:
+        sev_class = hole["severity"]
+        html += f"""
+        <div class="hole-card {sev_class}">
+            <strong>{hole['title']}</strong>
+            <p>{hole['detail']}</p>
+            <em>建议: {hole['suggestion']}</em>
+        </div>"""
+    return html
 
 
 def _get_category_color(category: str) -> str:
@@ -166,16 +809,3 @@ def _get_category_color(category: str) -> str:
         "other": "#6b7280",
     }
     return colors.get(category, "#6b7280")
-
-
-def _get_icon(category: str) -> str:
-    icons = {
-        "development": "🟦",
-        "browser": "🟧",
-        "communication": "🟨",
-        "design": "🟪",
-        "office": "📄",
-        "terminal": "⬛",
-        "other": "⬜",
-    }
-    return icons.get(category, "⬜")

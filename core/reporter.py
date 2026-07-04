@@ -22,11 +22,17 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
     timeline_items = []
     for block in analysis.get("timeline", [])[:30]:  # 最多30个块
         start = block["start"].strftime("%H:%M")
+        end = block["end"].strftime("%H:%M") if hasattr(block["end"], "strftime") else ""
         duration_min = block.get("duration", 0) // 60
         icon = _get_icon(block["category"])
         name = _get_category_name(block["category"])
-        app = block["app"]
-        timeline_items.append(f"- {start} ({duration_min}min) {icon} {app} — {name}")
+        apps = block.get("app_names", [])
+        if isinstance(apps, list):
+            apps_str = ", ".join(apps[:2]) if apps else "-"
+        else:
+            apps_str = apps
+        time_range = f"{start}-{end}" if end else start
+        timeline_items.append(f"- {time_range} ({duration_min}min) {icon} {apps_str} — {name}")
 
     categories = []
     for cat in analysis.get("category_stats", []):

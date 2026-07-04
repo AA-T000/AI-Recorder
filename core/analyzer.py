@@ -1,4 +1,10 @@
-"""本地分析引擎 — 时间线重建、应用分类、时间黑洞检测、效率评分。"""
+"""本地分析引擎 — 时间线重建、应用分类、时间黑洞检测、效率评分。
+
+设计思路（参考 ActivityWatch 的 coalescing 理念）：
+- 原始数据是窗口切换事件（原子记录）
+- 分析时将同一应用的连续时间段合并为一个大块
+- 短时间内的应用切换（< 3分钟）视为同一活动的上下文切换
+"""
 
 import logging
 from datetime import datetime, timedelta, date
@@ -43,87 +49,123 @@ def _parse_iso(s: str) -> datetime:
     return datetime.fromisoformat(s)
 
 
-def build_timeline(records: List[Dict]) -> List[Dict]:
-    """将原始记录合并为时间线块。
+def build_coalesced_timeline(records: List[Dict], merge_gap_seconds: int = 180) -> List[Dict]:
+    """将原始记录合并为粗粒度的时间线块。
 
-    相邻同窗口记录合并为一个块。
+    合并规则：
+    1. 同一 category 的连续时间段合并为一个块
+    2. 两个同 category 块之间的间隔 <= merge_gap_seconds 也合并
+    3. 不同 category 的块不合并
+
+    Args:
+        records: 原始窗口切换记录
+        merge_gap_seconds: 同一分类内允许的最大间隔秒数（默认3分钟）
+
+    Returns:
+        合并后的时间线块列表
     """
     if not records:
         return []
 
-    timeline = []
-    current = {
-        "app": records[0]["app_name"],
-        "title": records[0]["window_title"],
+    # 先按时间排序
+    records.sort(key=lambda r: _parse_iso(r["start_time"]))
+
+    blocks = []
+    current_block = {
         "category": records[0]["category"],
+        "app_names": set(),
+        "titles": set(),
         "start": _parse_iso(records[0]["start_time"]),
-        "end": _parse_iso(records[0]["start_time"]),
+        "end": _parse_iso(records[0]["end_time"]) if records[0].get("end_time") else _parse_iso(records[0]["start_time"]),
+        "total_seconds": records[0].get("duration_seconds", 0),
     }
 
     for rec in records[1:]:
         rec_start = _parse_iso(rec["start_time"])
         rec_end = _parse_iso(rec["end_time"]) if rec.get("end_time") else rec_start
+        rec_duration = rec.get("duration_seconds", 0)
 
-        # 如果窗口相同且时间连续（间隔 <= 3 秒），合并
-        if (current["app"] == rec["app_name"]
-                and abs((rec_start - current["end"]).total_seconds()) <= 3):
-            current["end"] = rec_end
+        # 判断是否可以合并到当前块
+        gap = (rec_start - current_block["end"]).total_seconds()
+
+        if (rec["category"] == current_block["category"]
+                and gap <= merge_gap_seconds):
+            # 合并到当前块
+            current_block["app_names"].add(rec["app_name"])
+            current_block["titles"].add(rec["window_title"])
+            current_block["end"] = max(current_block["end"], rec_end)
+            current_block["total_seconds"] += rec_duration
         else:
-            current["duration"] = int((current["end"] - current["start"]).total_seconds())
-            timeline.append(current)
-            current = {
-                "app": rec["app_name"],
-                "title": rec["window_title"],
+            # 结束当前块，开启新块
+            current_block["app_names"] = list(current_block["app_names"])
+            current_block["titles"] = list(current_block["titles"])[:3]  # 最多保留3个标题
+            current_block["duration"] = int(current_block["total_seconds"])
+            blocks.append(current_block)
+            current_block = {
                 "category": rec["category"],
+                "app_names": {rec["app_name"]},
+                "titles": {rec["window_title"]},
                 "start": rec_start,
                 "end": rec_end,
+                "total_seconds": rec_duration,
             }
 
-    current["duration"] = int((current["end"] - current["start"]).total_seconds())
-    timeline.append(current)
-    return timeline
+    # 最后一个块
+    current_block["app_names"] = list(current_block["app_names"])
+    current_block["titles"] = list(current_block["titles"])[:3]
+    current_block["duration"] = int(current_block["total_seconds"])
+    blocks.append(current_block)
+
+    return blocks
 
 
-def detect_fragmentation(timeline: List[Dict], threshold: int = 3, window_minutes: int = 5) -> List[Dict]:
+def detect_fragmentation(blocks: List[Dict], threshold: int = 3, window_minutes: int = 5) -> List[Dict]:
     """检测碎片化切换。
 
-    在 window_minutes 分钟内切换了 >= threshold 个不同应用，即为碎片化。
+    在 window_minutes 分钟内出现了 >= threshold 个不同分类，即为碎片化。
     """
     fragments = []
-    if len(timeline) < threshold:
+    if len(blocks) < threshold:
         return fragments
 
-    for i in range(len(timeline)):
-        window_end = timeline[i]["start"] + timedelta(minutes=window_minutes)
-        apps_in_window = set()
-        apps_detail = []
+    i = 0
+    while i < len(blocks):
+        window_end = blocks[i]["start"] + timedelta(minutes=window_minutes)
+        categories_in_window = set()
+        block_indices = []
 
-        for j in range(i, len(timeline)):
-            if timeline[j]["start"] > window_end:
+        for j in range(i, len(blocks)):
+            if blocks[j]["start"] > window_end:
                 break
-            apps_in_window.add(timeline[j]["app"])
-            apps_detail.append(timeline[j]["app"])
+            categories_in_window.add(blocks[j]["category"])
+            block_indices.append(j)
 
-        if len(apps_in_window) >= threshold:
+        if len(categories_in_window) >= threshold:
+            apps_involved = []
+            for idx in block_indices:
+                apps_involved.extend(blocks[idx].get("app_names", []))
             fragments.append({
-                "start": timeline[i]["start"],
-                "apps": list(set(apps_detail)),
-                "count": len(apps_in_window),
-                "detail": apps_detail[:threshold + 2],  # 最多显示几个
+                "start": blocks[i]["start"],
+                "categories": list(categories_in_window),
+                "count": len(categories_in_window),
+                "apps": list(set(apps_involved))[:5],
+                "blocks": block_indices,
             })
-            # 跳过这个窗口，避免重复报告
-            i += len(apps_detail)
+            # 跳过这个窗口
+            i = block_indices[-1] + 1
+        else:
+            i += 1
 
     return fragments
 
 
-def detect_boreholes(timeline: List[Dict], settings: dict) -> List[Dict]:
+def detect_boreholes(blocks: List[Dict], settings: dict) -> List[Dict]:
     """检测时间黑洞。
 
     三类黑洞：
-    1. 碎片化切换
-    2. 长时无效切换（专注块不足）
-    3. 会议陷阱（视频会议应用过长）
+    1. 碎片化切换 — 短时间内在不同分类间频繁切换
+    2. 长时无效切换 — 专注块不足，大部分时间在碎片任务间切换
+    3. 会议陷阱 — 视频会议应用连续使用超过1小时
     """
     holes = []
     bh = settings.get("blackhole", {})
@@ -132,71 +174,78 @@ def detect_boreholes(timeline: List[Dict], settings: dict) -> List[Dict]:
     frag_win = bh.get("fragment_window_minutes", 5)
 
     # 1. 碎片化
-    frags = detect_fragmentation(timeline, frag_thresh, frag_win)
+    frags = detect_fragmentation(blocks, frag_thresh, frag_win)
     for frag in frags:
         holes.append({
             "type": "fragmentation",
             "title": "碎片化切换",
             "severity": "warning",
             "start": frag["start"].strftime("%H:%M"),
-            "detail": f"在 {frag['count']} 个应用间切换: {' → '.join(frag['detail'])}",
-            "suggestion": "集中处理消息，减少上下文切换",
+            "detail": f"在 {frag['count']} 个应用分类间切换: {', '.join(frag['categories'])}",
+            "suggestion": "集中处理消息，减少上下文切换。建议设定固定时间批量回复",
         })
 
-    # 2. 短块碎片（每个专注块都 < focus_min）
-    short_blocks = [t for t in timeline if t.get("duration", 0) < focus_min * 60]
-    if len(short_blocks) > len(timeline) * 0.5 and len(short_blocks) > 3:
-        total_wasted = sum(t.get("duration", 0) for t in short_blocks)
-        holes.append({
-            "type": "micro_tasks",
-            "title": "大量微任务",
-            "severity": "info",
-            "start": "",
-            "detail": f"今天有 {len(short_blocks)} 个短块（<{focus_min}分钟），"
-                      f"共 {seconds_to_readable(total_wasted)} 花在碎片任务上",
-            "suggestion": "尝试批量处理类似任务，减少切换成本",
-        })
+    # 2. 短块碎片（大部分专注块都 < focus_min 分钟）
+    total_blocks = len(blocks)
+    if total_blocks > 0:
+        short_blocks = [b for b in blocks if b.get("duration", 0) < focus_min * 60]
+        if len(short_blocks) > total_blocks * 0.6 and len(short_blocks) > 3:
+            total_wasted = sum(b.get("duration", 0) for b in short_blocks)
+            holes.append({
+                "type": "micro_tasks",
+                "title": "大量微任务",
+                "severity": "info",
+                "start": "",
+                "detail": f"今天有 {len(short_blocks)}/{total_blocks} 个短块（<{focus_min}分钟），"
+                          f"共 {seconds_to_readable(total_wasted)} 花在碎片任务上",
+                "suggestion": "尝试批量处理类似任务，减少切换成本",
+            })
 
     # 3. 会议陷阱
-    comm_timeline = [t for t in timeline if t["category"] == "communication"]
-    for ct in comm_timeline:
-        if ct.get("duration", 0) > 3600:  # 超过1小时
+    comm_blocks = [b for b in blocks if b["category"] == "communication"]
+    for cb in comm_blocks:
+        if cb.get("duration", 0) > 3600:  # 超过1小时
             holes.append({
                 "type": "meeting_trap",
                 "title": "深度会议日",
                 "severity": "info",
-                "start": ct["start"].strftime("%H:%M"),
-                "detail": f"连续会议 {seconds_to_readable(ct['duration'])}: {ct['app']}",
-                "suggestion": "考虑将多个会议合并，或设置无会议时段",
+                "start": cb["start"].strftime("%H:%M"),
+                "detail": f"连续会议 {seconds_to_readable(cb['duration'])}: {', '.join(cb.get('app_names', []))}",
+                "suggestion": "考虑将多个会议合并，或设置无会议时段保持专注",
             })
 
     return holes
 
 
-def calculate_efficiency(timeline: List[Dict], holes: List[Dict]) -> int:
-    """计算效率评分 0-100。"""
-    if not timeline:
+def calculate_efficiency(blocks: List[Dict], holes: List[Dict]) -> int:
+    """计算效率评分 0-100。
+
+    评分构成：
+    - 专注时长占比（60分）：>= 20分钟的连续块占总时长的比例
+    - 黑洞惩罚（40分）：碎片化、微任务、会议陷阱等扣分
+    """
+    if not blocks:
         return 0
 
-    total_seconds = sum(t.get("duration", 0) for t in timeline)
+    total_seconds = sum(b.get("duration", 0) for b in blocks)
     if total_seconds == 0:
         return 0
 
     # 专注时长（>= 20分钟的连续块）
-    focus_blocks = [t for t in timeline if t.get("duration", 0) >= 1200]
-    focus_seconds = sum(t.get("duration", 0) for t in focus_blocks)
+    focus_blocks = [b for b in blocks if b.get("duration", 0) >= 1200]
+    focus_seconds = sum(b.get("duration", 0) for b in focus_blocks)
     focus_ratio = focus_seconds / total_seconds
 
-    # 分数构成: 专注占比 60%, 黑洞惩罚 40%
+    # 分数构成
     score = int(focus_ratio * 60)
 
     # 黑洞扣分
     penalty = 0
     for hole in holes:
         if hole["severity"] == "warning":
-            penalty += 10
+            penalty += 12
         elif hole["severity"] == "info":
-            penalty += 5
+            penalty += 6
     score -= min(penalty, 40)
 
     return max(0, min(100, score))
@@ -217,8 +266,8 @@ def analyze_day(target_date: date, settings: Optional[dict] = None) -> Dict[str,
             "message": f"{target_date} 没有记录数据",
         }
 
-    # 构建时间线
-    timeline = build_timeline(records)
+    # 构建合并后的时间线（粗粒度）
+    blocks = build_coalesced_timeline(records)
 
     # 按分类汇总
     summary = get_daily_summary(target_date)
@@ -237,20 +286,20 @@ def analyze_day(target_date: date, settings: Optional[dict] = None) -> Dict[str,
         })
 
     # 检测时间黑洞
-    holes = detect_boreholes(timeline, settings)
+    holes = detect_boreholes(blocks, settings)
 
     # 计算效率
-    efficiency = calculate_efficiency(timeline, holes)
+    efficiency = calculate_efficiency(blocks, holes)
 
     # 最早和最晚记录
-    start_time = min(t["start"] for t in timeline)
-    end_time = max(t["end"] for t in timeline)
+    start_time = min(_parse_iso(r["start_time"]) for r in records)
+    end_time = max(_parse_iso(r["end_time"]) for r in records if r.get("end_time"))
     work_duration = int((end_time - start_time).total_seconds())
 
     return {
         "date": target_date.isoformat(),
         "has_data": True,
-        "timeline": timeline,
+        "timeline": blocks,  # 合并后的粗粒度时间线
         "category_stats": category_stats,
         "total_seconds": total_seconds,
         "work_duration": work_duration,
@@ -260,6 +309,7 @@ def analyze_day(target_date: date, settings: Optional[dict] = None) -> Dict[str,
         "holes": holes,
         "efficiency": efficiency,
         "record_count": len(records),
+        "block_count": len(blocks),  # 合并后的块数
     }
 
 

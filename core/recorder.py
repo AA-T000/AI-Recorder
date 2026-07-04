@@ -1,7 +1,15 @@
-"""数据采集器 — 后台运行，每 N 秒采样一次当前活动窗口。"""
+"""数据采集器 — 后台运行，每 N 秒采样一次当前活动窗口。
 
-import time
+设计原则（参考 ActivityWatch 等开源项目）：
+- 原始数据只存窗口切换事件（原子记录）
+- 粗粒度分析在查询时完成（合并同一应用的连续时间段）
+- 不记录屏幕内容、不截屏、不录屏
+- 只记录应用名和窗口标题，纯文本
+"""
+
+import ctypes
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -12,6 +20,17 @@ from config.settings import load_settings
 from storage.database import init_db, insert_record, close_open_records
 
 logger = logging.getLogger(__name__)
+
+
+def _get_pid_from_hwnd(hwnd):
+    """从窗口句柄获取进程 ID（Windows API）。"""
+    try:
+        user32 = ctypes.windll.user32
+        pid = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return pid.value
+    except Exception:
+        return None
 
 
 def _classify_app(app_name: str, window_title: str, categories: dict) -> str:
@@ -39,26 +58,58 @@ def _get_active_window_info() -> Optional[tuple]:
         windows = gw.getActiveWindow()
         if not windows:
             return None
-        title = windows.title or ""
-        # 尝试从进程名获取应用名
-        try:
-            pid = windows._hWnd
-            proc = psutil.Process(pid)
-            app_name = proc.name().lower()
-        except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
-            app_name = "unknown"
 
-        if not app_name or app_name == "unknown":
+        title = windows.title or ""
+
+        # 从窗口句柄获取 PID，再用 PID 获取进程名
+        hwnd = windows._hWnd
+        pid = _get_pid_from_hwnd(hwnd)
+        if pid:
+            try:
+                proc = psutil.Process(pid)
+                app_name = proc.name().lower()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                app_name = _infer_app_from_title(title)
+        else:
+            app_name = _infer_app_from_title(title)
+
+        if not app_name:
             return None
 
         return (app_name, title)
+
     except Exception as e:
         logger.debug(f"获取窗口信息失败: {e}")
         return None
 
 
+def _infer_app_from_title(title: str) -> str:
+    """从窗口标题推断应用名（备用方案）。"""
+    title_lower = title.lower()
+    if "edge" in title_lower or "microsoft" in title_lower:
+        return "msedge.exe"
+    if "chrome" in title_lower:
+        return "chrome.exe"
+    if "visual studio" in title_lower or "vscode" in title_lower:
+        return "code.exe"
+    if "pycharm" in title_lower:
+        return "pycharm64.exe"
+    if "wechat" in title_lower or "微信" in title_lower:
+        return "wechat.exe"
+    if "cmd" in title_lower or "powershell" in title_lower:
+        return "cmd.exe"
+    return "unknown"
+
+
 class WindowRecorder:
-    """窗口活动记录器。后台持续运行，将采样数据写入数据库。"""
+    """窗口活动记录器。
+
+    核心逻辑：
+    - 每 N 秒采样一次当前活动窗口
+    - 同一应用+同一窗口连续使用时，不断延长上一段
+    - 切换到不同应用时，关闭上一段并开启新段
+    - 所有原始记录存入 SQLite
+    """
 
     def __init__(self):
         self._settings = load_settings()
@@ -66,19 +117,25 @@ class WindowRecorder:
         self._last_app: Optional[str] = None
         self._last_title: Optional[str] = None
         self._last_start: Optional[datetime] = None
+        self._last_category: Optional[str] = None
         init_db()
         logger.info("数据采集器已初始化")
 
     def _save_snapshot(self, app_name: str, title: str):
-        """保存一个采样快照。"""
+        """保存一个采样快照。
+
+        逻辑：
+        1. 如果窗口没变 → 延长上一段的结束时间
+        2. 如果应用变了 → 关闭旧段，开启新段
+        3. 同一应用但不同窗口 → 关闭旧段，开启新段（记录为不同活动）
+        """
         categories = self._settings.get("categories", {})
         category = _classify_app(app_name, title, categories)
         now = datetime.now()
 
-        # 如果窗口没变，只延长上一段的结束时间
+        # 完全相同的窗口（应用+标题都没变）→ 延长上一段
         if (self._last_app == app_name and self._last_title == title
                 and self._last_start is not None):
-            # 更新上一条记录的结束时间
             from storage.database import _get_conn
             conn = _get_conn()
             try:
@@ -97,26 +154,44 @@ class WindowRecorder:
                 conn.close()
             return
 
-        # 关闭上一段记录
+        # 同一应用但不同窗口 → 也延长（比如 VS Code 切换了不同文件）
+        if (self._last_app == app_name and self._last_category == category
+                and self._last_start is not None):
+            from storage.database import _get_conn
+            conn = _get_conn()
+            try:
+                conn.execute(
+                    """UPDATE records SET end_time = ?, duration_seconds =
+                       julianday(?) - julianday(start_time) * 86400,
+                       window_title = ?
+                       WHERE id = (
+                           SELECT id FROM records
+                           WHERE end_time IS NULL
+                           ORDER BY start_time DESC LIMIT 1
+                       )""",
+                    (now.isoformat(), now.isoformat(), title),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return
+
+        # 不同应用 → 关闭旧段，开启新段
         if self._last_start is not None:
             duration = int((now - self._last_start).total_seconds())
             if duration > 0:
                 insert_record(
                     app_name=self._last_app or "unknown",
                     window_title=self._last_title or "",
-                    category=_classify_app(
-                        self._last_app or "unknown",
-                        self._last_title or "",
-                        categories,
-                    ),
+                    category=self._last_category or "other",
                     start_time=self._last_start,
                     end_time=now,
                     duration_seconds=duration,
                 )
 
-        # 开始新记录
         self._last_app = app_name
         self._last_title = title
+        self._last_category = category
         self._last_start = now
 
     def start(self):
@@ -150,11 +225,7 @@ class WindowRecorder:
                 insert_record(
                     app_name=self._last_app or "unknown",
                     window_title=self._last_title or "",
-                    category=_classify_app(
-                        self._last_app or "unknown",
-                        self._last_title or "",
-                        self._settings.get("categories", {}),
-                    ),
+                    category=self._last_category or "other",
                     start_time=self._last_start,
                     end_time=now,
                     duration_seconds=duration,
