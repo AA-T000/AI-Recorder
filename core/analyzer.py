@@ -160,28 +160,27 @@ def detect_fragmentation(blocks: List[Dict], threshold: int = 3, window_minutes:
 
 
 def detect_boreholes(blocks: List[Dict], settings: dict) -> List[Dict]:
-    """检测时间黑洞。
-
-    三类黑洞：
-    1. 碎片化切换 — 短时间内在不同分类间频繁切换
-    2. 长时无效切换 — 专注块不足，大部分时间在碎片任务间切换
-    3. 会议陷阱 — 视频会议应用连续使用超过1小时
-    """
+    """检测时间黑洞（同类去重，每种类型只报告一次最严重的一次）。"""
     holes = []
     bh = settings.get("blackhole", {})
     focus_min = bh.get("focus_block_minutes", 20)
     frag_thresh = bh.get("fragment_threshold", 3)
     frag_win = bh.get("fragment_window_minutes", 5)
 
-    # 1. 碎片化
+    # 1. 碎片化 — 取最严重的一次（切换分类最多的）
     frags = detect_fragmentation(blocks, frag_thresh, frag_win)
-    for frag in frags:
+    if frags:
+        # 合并所有碎片化时段为一条报告
+        worst = max(frags, key=lambda f: f["count"])
+        all_apps = set()
+        for frag in frags:
+            all_apps.update(frag.get("apps", []))
         holes.append({
             "type": "fragmentation",
             "title": "碎片化切换",
             "severity": "warning",
-            "start": frag["start"].strftime("%H:%M"),
-            "detail": f"在 {frag['count']} 个应用分类间切换: {', '.join(frag['categories'])}",
+            "start": f"{frags[0]['start'].strftime('%H:%M')} ~ {frags[-1]['start'].strftime('%H:%M')}",
+            "detail": f"全天有 {len(frags)} 个时段在 {worst['count']} 个分类间频繁切换，涉及: {', '.join(list(all_apps)[:5])}",
             "suggestion": "集中处理消息，减少上下文切换。建议设定固定时间批量回复",
         })
 
@@ -201,18 +200,23 @@ def detect_boreholes(blocks: List[Dict], settings: dict) -> List[Dict]:
                 "suggestion": "尝试批量处理类似任务，减少切换成本",
             })
 
-    # 3. 会议陷阱
+    # 3. 会议陷阱 — 合并所有长会议为一条
     comm_blocks = [b for b in blocks if b["category"] == "communication"]
-    for cb in comm_blocks:
-        if cb.get("duration", 0) > 3600:  # 超过1小时
-            holes.append({
-                "type": "meeting_trap",
-                "title": "深度会议日",
-                "severity": "info",
-                "start": cb["start"].strftime("%H:%M"),
-                "detail": f"连续会议 {seconds_to_readable(cb['duration'])}: {', '.join(cb.get('app_names', []))}",
-                "suggestion": "考虑将多个会议合并，或设置无会议时段保持专注",
-            })
+    long_meetings = [cb for cb in comm_blocks if cb.get("duration", 0) > 3600]
+    if long_meetings:
+        total_meeting = sum(cb.get("duration", 0) for cb in long_meetings)
+        apps_involved = set()
+        for cb in long_meetings:
+            apps_involved.update(cb.get("app_names", []))
+        holes.append({
+            "type": "meeting_trap",
+            "title": "深度会议日",
+            "severity": "info",
+            "start": f"{long_meetings[0]['start'].strftime('%H:%M')} ~ {long_meetings[-1]['start'].strftime('%H:%M')}",
+            "detail": f"有 {len(long_meetings)} 场长会议（>{focus_min}分钟），"
+                      f"总计 {seconds_to_readable(total_meeting)}: {', '.join(list(apps_involved)[:3])}",
+            "suggestion": "考虑将多个会议合并，或设置无会议时段保持专注",
+        })
 
     return holes
 

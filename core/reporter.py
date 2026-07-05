@@ -42,7 +42,7 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
     for hole in analysis.get("holes", []):
         holes.append(f"- [{hole['severity']}] {hole['title']}: {hole['detail']}")
 
-    prompt = f"""你是一个工作效率分析助手。根据以下本地分析数据，生成一份中文日报。
+    prompt = f"""你是一个工作效率分析助手。根据以下本地分析数据，给出简短建议。
 
 ## 日期
 {analysis['date']}
@@ -51,12 +51,11 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
 最早活动: {analysis.get('earliest', '?')}
 最晚活动: {analysis.get('latest', '?')}
 总工作时长: {analysis.get('work_duration', 0) // 60} 分钟
-记录数: {analysis.get('record_count', 0)}
 
 ## 时间分布
 {chr(10).join(categories) if categories else '- 暂无数据'}
 
-## 时间线（前30个块）
+## 时间线（前20个块）
 {chr(10).join(timeline_items) if timeline_items else '- 暂无数据'}
 
 ## 时间黑洞检测
@@ -65,27 +64,16 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
 ## 效率评分
 {analysis.get('efficiency', 0)} / 100
 
-请按以下格式生成日报：
-
-### 📋 今日工作清单
-按时间顺序列出主要活动（合并同类项，不要列太细）
-
-### ⏰ 时间分布
-用文字描述各主要类别的占比
-
-### 🔍 时间黑洞报告
-指出具体的时间浪费模式，给出原因
+请只输出以下内容（不要输出其他内容）：
 
 ### 💡 效率建议
-给出 2-3 条具体可行的改进建议
+1. 第一条建议
+2. 第二条建议
+3. 第三条建议
 
 ### 📈 一句话总结
 用一句话概括今天的工作状态
-
-注意：
-- 语气自然，像一个聪明的同事在给你反馈
-- 不要编造数据，只基于提供的数据进行分析
-- 如果数据太少（少于3条记录），如实说明"""
+"""
 
     return prompt
 
