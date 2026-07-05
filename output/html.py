@@ -8,6 +8,60 @@ from config.settings import REPORTS_DIR, load_settings
 from core.analyzer import CATEGORY_NAMES, CATEGORY_ICONS
 
 
+def _clean_ai_report(raw: str) -> str:
+    """清洗 AI 报告：去掉 markdown 格式，转为 HTML。"""
+    import re
+    lines = raw.split("\n")
+    cleaned = []
+    in_list = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # 跳过纯介绍性废话（第一段的问候语）
+        if not cleaned and re.match(r'^你好|我是|这份日报|旨在帮助', stripped):
+            continue
+
+        # 去掉章节标题的 ### 前缀
+        if stripped.startswith("### "):
+            cleaned.append(f"<h4 style='color:rgba(255,255,255,0.7);margin:16px 0 8px;font-size:14px;'>{stripped[4:]}</h4>")
+            continue
+
+        # 去掉一级/二级标题
+        if stripped.startswith("# ") or stripped.startswith("## "):
+            continue
+
+        # 列表项
+        if stripped.startswith("* ") or stripped.startswith("- "):
+            if not in_list:
+                cleaned.append("<ul style='padding-left:20px;margin:4px 0;'>")
+                in_list = True
+            item = stripped[2:]
+            # 处理 ** 粗体
+            item = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', item)
+            # 处理子列表缩进
+            if item.startswith("    "):
+                item = f"<li style='padding-left:16px'>{item.strip()}</li>"
+            elif item.startswith("**"):
+                item = f"<li style='font-weight:600'>{item}</li>"
+            else:
+                item = f"<li>{item}</li>"
+            cleaned.append(item)
+            continue
+
+        # 段落
+        if in_list:
+            cleaned.append("</ul>")
+            in_list = False
+        if stripped:
+            cleaned.append(f"<p style='margin:4px 0;line-height:1.6'>{stripped}</p>")
+
+    if in_list:
+        cleaned.append("</ul>")
+
+    return "\n".join(cleaned)
+
+
 def save_html_report(report_data: dict, target_date: Optional[date] = None) -> Optional[str]:
     """生成交互式 HTML 仪表盘。"""
     if target_date is None:
@@ -17,7 +71,8 @@ def save_html_report(report_data: dict, target_date: Optional[date] = None) -> O
     filepath = os.path.join(REPORTS_DIR, f"dashboard-{target_date.isoformat()}.html")
 
     analysis = report_data.get("local_analysis", {})
-    ai_report = report_data.get("ai_report", "")
+    ai_report_raw = report_data.get("ai_report", "")
+    ai_report = _clean_ai_report(ai_report_raw) if ai_report_raw else ""
     success = report_data.get("success", False)
 
     eff = analysis.get("efficiency", 0)
