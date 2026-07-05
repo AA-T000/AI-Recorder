@@ -4,7 +4,20 @@ import os
 from datetime import date
 from typing import Optional
 
-from config.settings import REPORTS_DIR
+from config.settings import REPORTS_DIR, load_settings
+
+# 全局应用名映射表（从 settings 加载）
+_aliases = {}
+
+
+def _load_aliases():
+    global _aliases
+    if not _aliases:
+        try:
+            settings = load_settings()
+            _aliases = settings.get("app_aliases", {})
+        except Exception:
+            pass
 
 # 分类映射（与 analyzer.py 保持一致）
 CATEGORY_NAMES = {
@@ -46,6 +59,17 @@ def _seconds_to_hm(seconds: int) -> str:
     return f"{m}m"
 
 
+def _clean_app_name(raw: str) -> str:
+    """清理应用名：去掉 .exe、下划线、多余后缀，保留可读名称。"""
+    _load_aliases()
+    name = raw.strip().lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    if name in _aliases:
+        return _aliases[name]
+    return name.replace("_", " ").title()
+
+
 def _build_timeline_table(blocks: list, min_duration_min: int = 2) -> str:
     """构建应用时间线表格（过滤掉太短的块，只显示有意义的）。"""
     if not blocks:
@@ -54,13 +78,11 @@ def _build_timeline_table(blocks: list, min_duration_min: int = 2) -> str:
     lines = []
     for b in blocks:
         duration_sec = b.get("duration", 0)
-        # 太短的块跳过（< min_duration_min 分钟的不显示）
         if duration_sec < min_duration_min * 60:
             continue
 
         start = b["start"]
         end = b["end"]
-        # 处理时间格式
         if hasattr(start, "strftime"):
             start_str = start.strftime("%H:%M")
             end_str = end.strftime("%H:%M")
@@ -70,7 +92,11 @@ def _build_timeline_table(blocks: list, min_duration_min: int = 2) -> str:
 
         icon = CATEGORY_ICONS.get(b["category"], "⬜")
         app_names = b.get("app_names", [])
-        apps_str = ", ".join(app_names[:2]) if app_names else "-"
+        if isinstance(app_names, list):
+            cleaned = [_clean_app_name(a) for a in app_names[:2]]
+            apps_str = ", ".join(cleaned) if cleaned else "-"
+        else:
+            apps_str = _clean_app_name(str(app_names)) if app_names else "-"
         cat_name = CATEGORY_NAMES.get(b["category"], b["category"])
 
         lines.append(f"| {start_str}-{end_str} | {apps_str} | {icon} {cat_name} | {_seconds_to_hm(duration_sec)} |")

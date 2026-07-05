@@ -41,7 +41,7 @@ recorder:
   privacy_mode: true        # 隐私模式
 
 ai:
-  api_base: "http://localhost:xxxx"   # Agnes API 地址
+  api_base: "http://localhost:xxxx"   # Agent API 地址
   api_key: "your-key"
   model: "agnes-xxx"
 ```

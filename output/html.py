@@ -4,7 +4,7 @@ import os
 from datetime import date
 from typing import Optional
 
-from config.settings import REPORTS_DIR
+from config.settings import REPORTS_DIR, load_settings
 from core.analyzer import CATEGORY_NAMES, CATEGORY_ICONS
 
 
@@ -759,11 +759,45 @@ def _build_categories_html(stats: list) -> str:
     return html
 
 
+# 全局应用名映射表（从 settings 加载）
+_aliases = {}
+
+
+def _load_aliases():
+    global _aliases
+    if not _aliases:
+        try:
+            settings = load_settings()
+            _aliases = settings.get("app_aliases", {})
+        except Exception:
+            pass
+
+
+def _clean_app_name(raw: str) -> str:
+    """清理应用名：去掉 .exe、下划线、多余后缀，保留可读名称。"""
+    _load_aliases()
+    name = raw.strip().lower()
+    # 去掉 .exe
+    if name.endswith(".exe"):
+        name = name[:-4]
+    # 优先查配置表
+    if name in _aliases:
+        return _aliases[name]
+    # 首字母大写
+    return name.replace("_", " ").title()
+
+
 def _build_timeline_html(timeline: list) -> str:
     if not timeline:
         return ""
+
+    # 过滤掉太短的块（< 1分钟的不显示）
+    filtered = [b for b in timeline if b.get("duration", 0) >= 60]
+    if not filtered:
+        filtered = timeline  # 如果全部都很短，就显示全部
+
     html = ""
-    for block in timeline:
+    for block in filtered:
         start = block["start"].strftime("%H:%M") if hasattr(block["start"], "strftime") else str(block["start"])
         end = block["end"].strftime("%H:%M") if hasattr(block["end"], "strftime") else ""
         duration_min = block.get("duration", 0) // 60
@@ -771,7 +805,12 @@ def _build_timeline_html(timeline: list) -> str:
         icon = CATEGORY_ICONS.get(block["category"], "⬜")
         name = CATEGORY_NAMES.get(block["category"], block["category"])
         apps = block.get("app_names", [])
-        apps_str = ", ".join(apps[:2]) if isinstance(apps, list) else apps
+        if isinstance(apps, list):
+            # 清理应用名：去掉 .exe，映射可读名称
+            cleaned = [_clean_app_name(a) for a in apps[:2]]
+            apps_str = ", ".join(cleaned)
+        else:
+            apps_str = _clean_app_name(str(apps))
         html += f"""
         <div class="tl-block">
             <div class="tl-line" style="background:linear-gradient(180deg,{color},{color}44)"></div>
@@ -780,6 +819,12 @@ def _build_timeline_html(timeline: list) -> str:
             <span class="tl-app">{name} ({apps_str})</span>
             <span class="tl-duration">{duration_min}m</span>
         </div>"""
+
+    # 如果被过滤掉的块太多，显示折叠提示
+    if len(timeline) - len(filtered) > 0:
+        hidden = len(timeline) - len(filtered)
+        html += f'<div style="text-align:center;padding:8px;color:rgba(255,255,255,0.25);font-size:12px;">还有 {hidden} 个短块（<1分钟）已折叠</div>'
+
     return html
 
 

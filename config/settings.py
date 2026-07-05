@@ -26,6 +26,24 @@ DEFAULT_SETTINGS = {
         "focus_block_minutes": 20,
         "fragment_window_minutes": 5,
     },
+    "app_aliases": {
+        # 默认映射，用户可在 settings.yaml 中覆盖
+        "pycharm64": "PyCharm",
+        "code": "VS Code",
+        "msedge": "Edge",
+        "chrome": "Chrome",
+        "weixin": "微信",
+        "explorer": "资源管理器",
+        "python": "Python",
+        "steamwebhelper": "Steam",
+        "devenv": "Visual Studio",
+        "unity": "Unity",
+        "geek64": "Geek Uninstaller",
+        "shellhost": "Shell Host",
+        "ai-recorder": "AI Recorder",
+        "powershell": "PowerShell",
+        "cmd": "CMD",
+    },
 }
 
 APP_DIR = os.path.expanduser("~/Documents/AI-Recorder")
