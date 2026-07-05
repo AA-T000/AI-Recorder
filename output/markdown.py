@@ -172,39 +172,56 @@ def save_markdown_report(report_data: dict, target_date: Optional[date] = None) 
         else:
             content += "✅ 未发现明显的时间黑洞，今天很专注！\n\n"
 
-        # ---- AI 建议（精简） ----
+        # ---- AI 报告（按章节拆分） ----
         if ai_report:
-            content += "## 💡 AI 建议\n\n"
-            # AI prompt 要求 2-3 条建议 + 一句话总结
-            # 提取建议部分
-            suggestion_lines = []
-            summary_line = ""
-            in_suggestions = False
-            in_summary = False
+            # 按 ### 拆分成章节
+            sections = {}
+            current_section = None
+            current_lines = []
+
             for line in ai_report.split("\n"):
-                stripped = line.strip()
-                if "💡 效率建议" in stripped or "建议" in stripped:
-                    in_suggestions = True
-                    in_summary = False
-                    continue
-                if "📝 一句话总结" in stripped or "📈 一句话总结" in stripped:
-                    in_suggestions = False
-                    in_summary = True
-                    continue
-                if in_suggestions and stripped:
-                    suggestion_lines.append(stripped)
-                if in_summary and stripped:
-                    summary_line = stripped
+                if line.startswith("### "):
+                    # 保存上一个章节
+                    if current_section:
+                        sections[current_section] = "\n".join(current_lines).strip()
+                    current_section = line[4:].strip()
+                    current_lines = []
+                else:
+                    current_lines.append(line)
 
-            if suggestion_lines:
-                for i, s in enumerate(suggestion_lines[:3], 1):
-                    # 清理数字前缀
-                    clean = s.lstrip("0123456789.）)- ")
-                    content += f"{i}. {clean}\n"
-                content += "\n"
+            # 保存最后一个章节
+            if current_section:
+                sections[current_section] = "\n".join(current_lines).strip()
 
-            if summary_line:
-                content += f"## 📝 总结\n\n{summary_line}\n"
+            # 一、工作摘要
+            for key in ["一、工作摘要", "工作摘要", "工作概述"]:
+                if key in sections:
+                    content += f"## 📝 工作摘要\n\n{sections[key]}\n\n"
+                    break
+
+            # 二、应用使用
+            for key in ["二、应用使用", "应用使用"]:
+                if key in sections:
+                    content += f"## 🖥️ 应用使用\n\n{sections[key]}\n\n"
+                    break
+
+            # 三、效率洞察
+            for key in ["三、效率洞察", "效率洞察"]:
+                if key in sections:
+                    content += f"## 🔍 效率洞察\n\n{sections[key]}\n\n"
+                    break
+
+            # 四、建议
+            for key in ["四、建议", "建议"]:
+                if key in sections:
+                    content += f"## 💡 建议\n\n{sections[key]}\n\n"
+                    break
+
+            # 五、一句话总结
+            for key in ["五、一句话总结", "一句话总结", "总结"]:
+                if key in sections:
+                    content += f"## 📌 总结\n\n{sections[key]}\n"
+                    break
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(content)

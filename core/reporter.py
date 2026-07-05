@@ -8,7 +8,7 @@ from typing import Optional
 import requests
 
 from config.settings import load_settings
-from core.analyzer import analyze_day
+from core.analyzer import analyze_day, CATEGORY_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -18,22 +18,6 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
     ai_cfg = settings.get("ai", {})
     model = ai_cfg.get("model", "agnes-4.8-1m")
 
-    # 构建简洁的分析数据
-    timeline_items = []
-    for block in analysis.get("timeline", [])[:30]:  # 最多30个块
-        start = block["start"].strftime("%H:%M")
-        end = block["end"].strftime("%H:%M") if hasattr(block["end"], "strftime") else ""
-        duration_min = block.get("duration", 0) // 60
-        icon = _get_icon(block["category"])
-        name = _get_category_name(block["category"])
-        apps = block.get("app_names", [])
-        if isinstance(apps, list):
-            apps_str = ", ".join(apps[:2]) if apps else "-"
-        else:
-            apps_str = apps
-        time_range = f"{start}-{end}" if end else start
-        timeline_items.append(f"- {time_range} ({duration_min}min) {icon} {apps_str} — {name}")
-
     categories = []
     for cat in analysis.get("category_stats", []):
         categories.append(f"- {cat['icon']} {cat['name']}: {cat['percentage']}% ({cat['seconds']//60}分钟)")
@@ -42,36 +26,79 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
     for hole in analysis.get("holes", []):
         holes.append(f"- [{hole['severity']}] {hole['title']}: {hole['detail']}")
 
-    prompt = f"""你是一个工作效率分析助手。根据以下本地分析数据，给出简短建议。
+    # 构建应用使用详情（按分类聚合）
+    app_usage = []
+    for cat in analysis.get("category_stats", []):
+        cat_name = cat["name"]
+        cat_secs = cat["seconds"]
+        cat_mins = cat_secs // 60
+        # 找这个分类下最常用的应用
+        cat_blocks = [b for b in analysis.get("timeline", []) if b["category"] == cat["category"]]
+        app_counts = {}
+        for b in cat_blocks:
+            for a in b.get("app_names", []):
+                app_counts[a] = app_counts.get(a, 0) + b.get("duration", 0)
+        if app_counts:
+            top_app = max(app_counts, key=app_counts.get)
+            top_app_mins = app_counts[top_app] // 60
+            app_usage.append(f"- {cat_name} ({cat_mins}分钟): {top_app} 占主导")
+
+    # 构建专注时段
+    focus_items = []
+    for fs in analysis.get("focus_sessions", [])[:5]:
+        focus_items.append(f"- {fs['start']}-{fs['end']} {', '.join(fs.get('app_names', []))} ({fs['duration']//60}分钟)")
+
+    # 构建峰值时段
+    peak_items = []
+    for ph in analysis.get("peak_hours", []):
+        h = ph["hour"]
+        mins = ph["total_seconds"] // 60
+        cat_name = CATEGORY_NAMES.get(ph["dominant_category"], ph["dominant_category"])
+        peak_items.append(f"- {h}:00 ({mins}分钟, {cat_name})")
+
+    prompt = f"""你是一个工作效率分析助手。根据以下本地分析数据，生成一份结构化的中文日报。
 
 ## 日期
 {analysis['date']}
 
-## 工作时长
-最早活动: {analysis.get('earliest', '?')}
-最晚活动: {analysis.get('latest', '?')}
-总工作时长: {analysis.get('work_duration', 0) // 60} 分钟
+## 概览
+- 工作时长: {analysis.get('work_duration', 0) // 60} 分钟
+- 最早活动: {analysis.get('earliest', '?')} | 最晚活动: {analysis.get('latest', '?')}
+- 效率评分: {analysis.get('efficiency', 0)}/100
 
 ## 时间分布
 {chr(10).join(categories) if categories else '- 暂无数据'}
 
-## 时间线（前20个块）
-{chr(10).join(timeline_items) if timeline_items else '- 暂无数据'}
+## 应用使用详情
+{chr(10).join(app_usage) if app_usage else '- 暂无数据'}
+
+## 专注时段（>=20分钟）
+{chr(10).join(focus_items) if focus_items else '- 今天没有 >=20 分钟的连续专注时段'}
+
+## 峰值时段（最活跃的小时）
+{chr(10).join(peak_items) if peak_items else '- 暂无数据'}
 
 ## 时间黑洞检测
 {chr(10).join(holes) if holes else '- 未发现明显的时间黑洞'}
 
-## 效率评分
-{analysis.get('efficiency', 0)} / 100
+请严格按照以下格式输出（不要省略任何章节）：
 
-请只输出以下内容（不要输出其他内容）：
+### 一、工作摘要
+用 2-3 句话概括今天主要做了什么工作，集中在哪些应用上。基于数据说话，不要编造。
 
-### 💡 效率建议
-1. 第一条建议
-2. 第二条建议
-3. 第三条建议
+### 二、应用使用
+列出使用最多的 3-5 个应用，每个应用给出：
+- 应用名
+- 使用时长
+- 主要用途（根据窗口标题推断，如"代码编写"、"查阅资料"等）
 
-### 📈 一句话总结
+### 三、效率洞察
+基于数据给出 1-2 条核心洞察（如"上午效率高于下午"、"碎片化严重"等）
+
+### 四、建议
+给出 2-3 条具体可行的改进建议
+
+### 五、一句话总结
 用一句话概括今天的工作状态
 """
 

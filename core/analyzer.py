@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timedelta, date
 from typing import List, Dict, Any, Optional
 
-from storage.database import get_records_by_date, get_daily_summary, get_recent_days
+from storage.database import get_records_by_date, get_daily_summary, get_recent_days, get_hourly_distribution, get_peak_hours
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,8 @@ def build_coalesced_timeline(records: List[Dict], merge_gap_seconds: int = 180) 
 def detect_fragmentation(blocks: List[Dict], threshold: int = 3, window_minutes: int = 5) -> List[Dict]:
     """检测碎片化切换。
 
-    在 window_minutes 分钟内出现了 >= threshold 个不同分类，即为碎片化。
+    只在 window_minutes 分钟内出现 >= threshold 个不同分类，
+    且其中至少有 2 个是非开发/非通讯类（排除正常多工），才算碎片化。
     """
     fragments = []
     if len(blocks) < threshold:
@@ -133,14 +134,28 @@ def detect_fragmentation(blocks: List[Dict], threshold: int = 3, window_minutes:
         window_end = blocks[i]["start"] + timedelta(minutes=window_minutes)
         categories_in_window = set()
         block_indices = []
+        non_work_cats = set()  # 非工作类（浏览器、游戏等）
 
         for j in range(i, len(blocks)):
             if blocks[j]["start"] > window_end:
                 break
-            categories_in_window.add(blocks[j]["category"])
+            cat = blocks[j]["category"]
+            categories_in_window.add(cat)
             block_indices.append(j)
+            # 浏览器、游戏等非生产类
+            if cat in ("browser", "other", "design"):
+                non_work_cats.add(cat)
 
-        if len(categories_in_window) >= threshold:
+        # 碎片化判定：
+        # 1. 窗口内分类数 >= threshold
+        # 2. 且非工作类 >= 2（说明真的在乱切，不是正常多工）
+        # 3. 或分类数 >= 4（不管非工作类多少，切了4种以上肯定有问题）
+        is_fragmentation = (
+            len(non_work_cats) >= 2 or
+            len(categories_in_window) >= 4
+        )
+
+        if is_fragmentation and len(categories_in_window) >= threshold:
             apps_involved = []
             for idx in block_indices:
                 apps_involved.extend(blocks[idx].get("app_names", []))
@@ -148,6 +163,7 @@ def detect_fragmentation(blocks: List[Dict], threshold: int = 3, window_minutes:
                 "start": blocks[i]["start"],
                 "categories": list(categories_in_window),
                 "count": len(categories_in_window),
+                "non_work_cats": list(non_work_cats),
                 "apps": list(set(apps_involved))[:5],
                 "blocks": block_indices,
             })
@@ -167,20 +183,22 @@ def detect_boreholes(blocks: List[Dict], settings: dict) -> List[Dict]:
     frag_thresh = bh.get("fragment_threshold", 3)
     frag_win = bh.get("fragment_window_minutes", 5)
 
-    # 1. 碎片化 — 取最严重的一次（切换分类最多的）
+    # 1. 碎片化 — 取最严重的一次（非工作类最多的）
     frags = detect_fragmentation(blocks, frag_thresh, frag_win)
     if frags:
         # 合并所有碎片化时段为一条报告
-        worst = max(frags, key=lambda f: f["count"])
+        worst = max(frags, key=lambda f: len(f.get("non_work_cats", [])))
         all_apps = set()
+        all_non_work = set()
         for frag in frags:
             all_apps.update(frag.get("apps", []))
+            all_non_work.update(frag.get("non_work_cats", []))
         holes.append({
             "type": "fragmentation",
             "title": "碎片化切换",
             "severity": "warning",
             "start": f"{frags[0]['start'].strftime('%H:%M')} ~ {frags[-1]['start'].strftime('%H:%M')}",
-            "detail": f"全天有 {len(frags)} 个时段在 {worst['count']} 个分类间频繁切换，涉及: {', '.join(list(all_apps)[:5])}",
+            "detail": f"全天有 {len(frags)} 个时段在非工作类应用间频繁切换: {', '.join(list(all_non_work)[:5])}",
             "suggestion": "集中处理消息，减少上下文切换。建议设定固定时间批量回复",
         })
 
@@ -255,6 +273,64 @@ def calculate_efficiency(blocks: List[Dict], holes: List[Dict]) -> int:
     return max(0, min(100, score))
 
 
+def check_data_integrity(records: List[Dict]) -> List[Dict]:
+    """检查数据完整性，发现记录异常。
+
+    检测：
+    1. 长空白 — 超过 2 小时没有记录
+    2. 瞬移 — 同一分钟内两个完全不相关的应用
+    3. 记录密度 — 平均每条记录间隔
+    """
+    issues = []
+    if len(records) < 2:
+        return issues
+
+    records_sorted = sorted(records, key=lambda r: _parse_iso(r["start_time"]))
+
+    # 1. 长空白（> 2小时）
+    for i in range(len(records_sorted) - 1):
+        end_curr = _parse_iso(records_sorted[i].get("end_time") or records_sorted[i]["start_time"])
+        start_next = _parse_iso(records_sorted[i + 1]["start_time"])
+        gap = (start_next - end_curr).total_seconds()
+        if gap > 7200:  # 2小时
+            issues.append({
+                "type": "long_gap",
+                "title": f"长时间空白 ({gap // 3600}h {gap % 3600 // 60}m)",
+                "severity": "info",
+                "detail": f"从 {end_curr.strftime('%H:%M')} 到 {start_next.strftime('%H:%M')} 没有记录，可能程序中断或电脑休眠",
+            })
+
+    # 2. 瞬移 — 同一分钟内切换了不同分类的应用
+    for i in range(len(records_sorted) - 1):
+        start_curr = _parse_iso(records_sorted[i]["start_time"])
+        start_next = _parse_iso(records_sorted[i + 1]["start_time"])
+        if abs((start_next - start_curr).total_seconds()) < 60:
+            if records_sorted[i].get("category") != records_sorted[i + 1].get("category"):
+                app_a = records_sorted[i].get("app_name", "?")
+                app_b = records_sorted[i + 1].get("app_name", "?")
+                issues.append({
+                    "type": "teleport",
+                    "title": f"疑似瞬移",
+                    "severity": "warning",
+                    "detail": f"{start_curr.strftime('%H:%M')} 从 {app_a} 瞬间切换到 {app_b}，可能是数据异常",
+                })
+                break  # 只报告一次
+
+    # 3. 记录密度
+    if len(records_sorted) >= 2:
+        total_span = (_parse_iso(records_sorted[-1]["start_time"]) - _parse_iso(records_sorted[0]["start_time"])).total_seconds()
+        if total_span > 0:
+            avg_interval = total_span / len(records_sorted)
+            issues.append({
+                "type": "density",
+                "title": f"记录密度: 每 {avg_interval:.0f}秒 一条",
+                "severity": "info",
+                "detail": f"全天 {len(records_sorted)} 条记录，跨度 {_seconds_to_hm(int(total_span))}",
+            })
+
+    return issues
+
+
 def analyze_day(target_date: date, settings: Optional[dict] = None) -> Dict[str, Any]:
     """分析某一天的工作数据，返回完整的分析报告。"""
     if settings is None:
@@ -300,6 +376,30 @@ def analyze_day(target_date: date, settings: Optional[dict] = None) -> Dict[str,
     end_time = max(_parse_iso(r["end_time"]) for r in records if r.get("end_time"))
     work_duration = int((end_time - start_time).total_seconds())
 
+    # 专注时段
+    focus_sessions = []
+    for b in blocks:
+        dur = b.get("duration", 0)
+        if dur >= 1200:
+            start = b["start"].strftime("%H:%M") if hasattr(b["start"], "strftime") else str(b["start"])
+            end = b["end"].strftime("%H:%M") if hasattr(b["end"], "strftime") else ""
+            focus_sessions.append({
+                "start": start,
+                "end": end,
+                "category": b["category"],
+                "app_names": b.get("app_names", []),
+                "duration": dur,
+            })
+
+    # 峰值时段（最活跃的3个小时）
+    peak_hours = get_peak_hours(target_date, top_n=3)
+
+    # 每小时活跃度
+    hourly_dist = get_hourly_distribution(target_date)
+
+    # 数据完整性检查
+    integrity_issues = check_data_integrity(records)
+
     return {
         "date": target_date.isoformat(),
         "has_data": True,
@@ -314,6 +414,10 @@ def analyze_day(target_date: date, settings: Optional[dict] = None) -> Dict[str,
         "efficiency": efficiency,
         "record_count": len(records),
         "block_count": len(blocks),  # 合并后的块数
+        "focus_sessions": focus_sessions,  # 专注时段列表
+        "peak_hours": peak_hours,  # 峰值时段
+        "hourly_distribution": hourly_dist,  # 每小时活跃度
+        "integrity_issues": integrity_issues,  # 数据完整性检查
     }
 
 
@@ -321,15 +425,48 @@ def analyze_week(days: int = 7) -> Dict[str, Any]:
     """分析最近 N 天的趋势。"""
     data = get_recent_days(days)
     trend = []
+    total_seconds_all = 0
+    total_records_all = 0
+    category_totals = {}
+
     for day_str in sorted(data.keys(), reverse=True)[:days]:
         day_data = data[day_str]
-        total = sum(item["total_seconds"] for item in day_data)
+        day_total = sum(item["total_seconds"] for item in day_data)
+        day_records = sum(item.get("record_count", 0) for item in day_data)
+        total_seconds_all += day_total
+        total_records_all += day_records
+
+        for item in day_data:
+            cat = item["category"]
+            category_totals[cat] = category_totals.get(cat, 0) + item["total_seconds"]
+
         trend.append({
             "date": day_str,
-            "total_seconds": total,
+            "total_seconds": day_total,
+            "record_count": day_records,
             "categories": day_data,
         })
-    return {"trend": trend}
+
+    # 计算整体分类占比
+    grand_total = sum(category_totals.values())
+    overall_categories = []
+    for cat, secs in sorted(category_totals.items(), key=lambda x: x[1], reverse=True):
+        overall_categories.append({
+            "category": cat,
+            "name": CATEGORY_NAMES.get(cat, cat),
+            "icon": CATEGORY_ICONS.get(cat, "⬜"),
+            "total_seconds": secs,
+            "percentage": round(secs / grand_total * 100, 1) if grand_total > 0 else 0,
+        })
+
+    return {
+        "trend": trend,
+        "total_days": len(trend),
+        "total_seconds": total_seconds_all,
+        "total_records": total_records_all,
+        "overall_categories": overall_categories,
+        "avg_daily_seconds": total_seconds_all // days if days > 0 else 0,
+    }
 
 
 def seconds_to_readable(seconds: int) -> str:
