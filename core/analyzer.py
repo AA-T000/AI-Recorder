@@ -195,11 +195,11 @@ def detect_boreholes(blocks: List[Dict], settings: dict) -> List[Dict]:
             all_non_work.update(frag.get("non_work_cats", []))
         holes.append({
             "type": "fragmentation",
-            "title": "碎片化切换",
-            "severity": "warning",
+            "title": "应用切换频繁",
+            "severity": "info",
             "start": f"{frags[0]['start'].strftime('%H:%M')} ~ {frags[-1]['start'].strftime('%H:%M')}",
-            "detail": f"全天有 {len(frags)} 个时段在非工作类应用间频繁切换: {', '.join(list(all_non_work)[:5])}",
-            "suggestion": "集中处理消息，减少上下文切换。建议设定固定时间批量回复",
+            "detail": f"全天有 {len(frags)} 个时段在非工作类应用间切换: {', '.join(list(all_non_work)[:5])}",
+            "suggestion": "可以尝试设定固定时间段集中处理这些应用，释放更多深度工作时间",
         })
 
     # 2. 短块碎片（大部分专注块都 < focus_min 分钟）
@@ -245,6 +245,8 @@ def calculate_efficiency(blocks: List[Dict], holes: List[Dict]) -> int:
     评分构成：
     - 专注时长占比（60分）：>= 20分钟的连续块占总时长的比例
     - 黑洞惩罚（40分）：碎片化、微任务、会议陷阱等扣分
+
+    注意：评分只是参考，不代表个人价值。低分意味着"有成长空间"，不是"今天白过了"。
     """
     if not blocks:
         return 0

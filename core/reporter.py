@@ -10,6 +10,32 @@ import requests
 from config.settings import load_settings
 from core.analyzer import analyze_day, CATEGORY_NAMES
 
+
+def _clean_app_name_for_ai(raw: str) -> str:
+    """清理应用名给 AI 使用：去掉 .exe，用可读名称。"""
+    name = raw.strip().lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    aliases = {
+        "pycharm64": "PyCharm",
+        "code": "VS Code",
+        "msedge": "Edge",
+        "chrome": "Chrome",
+        "weixin": "微信",
+        "explorer": "资源管理器",
+        "python": "Python",
+        "steamwebhelper": "Steam",
+        "devenv": "Visual Studio",
+        "unity": "Unity",
+        "guguai": "古怪加速器",
+        "geek64": "Geek Uninstaller",
+        "shellhost": "Shell Host",
+        "ai-recorder": "AI Recorder",
+        "powershell": "PowerShell",
+        "cmd": "CMD",
+    }
+    return aliases.get(name, name.replace("_", " ").title())
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +63,8 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
         app_counts = {}
         for b in cat_blocks:
             for a in b.get("app_names", []):
-                app_counts[a] = app_counts.get(a, 0) + b.get("duration", 0)
+                clean = _clean_app_name_for_ai(a)
+                app_counts[clean] = app_counts.get(clean, 0) + b.get("duration", 0)
         if app_counts:
             top_app = max(app_counts, key=app_counts.get)
             top_app_mins = app_counts[top_app] // 60
@@ -46,7 +73,8 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
     # 构建专注时段
     focus_items = []
     for fs in analysis.get("focus_sessions", [])[:5]:
-        focus_items.append(f"- {fs['start']}-{fs['end']} {', '.join(fs.get('app_names', []))} ({fs['duration']//60}分钟)")
+        apps_clean = [_clean_app_name_for_ai(a) for a in fs.get("app_names", [])]
+        focus_items.append(f"- {fs['start']}-{fs['end']} {', '.join(apps_clean)} ({fs['duration']//60}分钟)")
 
     # 构建峰值时段
     peak_items = []
@@ -56,7 +84,14 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
         cat_name = CATEGORY_NAMES.get(ph["dominant_category"], ph["dominant_category"])
         peak_items.append(f"- {h}:00 ({mins}分钟, {cat_name})")
 
-    prompt = f"""你是一个工作效率分析助手。根据以下本地分析数据，生成一份结构化的中文日报。
+    prompt = f"""你是一个个人成长复盘助手。根据以下本地分析数据，生成一份结构化的中文日报。
+
+## 工具定位
+- 这是自我复盘、自我成长、工作沉淀、量化进度的工具
+- 不是监控工具，不是批评自己的工具
+- 语气应该是鼓励的、建设性的、面向成长的
+- 即使效率低也要指出亮点和进步空间，不要一味批评
+- 用"机会"代替"问题"，用"可以做得更好"代替"你做得不好"
 
 ## 日期
 {analysis['date']}
@@ -83,22 +118,26 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
 
 请严格按照以下格式输出（不要省略任何章节）：
 
-### 一、工作摘要
+注意：
+- 应用名已经是可读名称（如 PyCharm、VS Code、Steam），不要加 .exe 后缀
+- 应用名用粗体 **应用名** 而不是代码格式
+
+一、工作摘要
 用 2-3 句话概括今天主要做了什么工作，集中在哪些应用上。基于数据说话，不要编造。
 
-### 二、应用使用
+二、应用使用
 列出使用最多的 3-5 个应用，每个应用给出：
-- 应用名
+- **应用名**
 - 使用时长
 - 主要用途（根据窗口标题推断，如"代码编写"、"查阅资料"等）
 
-### 三、效率洞察
+三、效率洞察
 基于数据给出 1-2 条核心洞察（如"上午效率高于下午"、"碎片化严重"等）
 
-### 四、建议
+四、建议
 给出 2-3 条具体可行的改进建议
 
-### 五、一句话总结
+五、一句话总结
 用一句话概括今天的工作状态
 """
 

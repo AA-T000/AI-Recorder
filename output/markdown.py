@@ -174,17 +174,33 @@ def save_markdown_report(report_data: dict, target_date: Optional[date] = None) 
 
         # ---- AI 报告（按章节拆分） ----
         if ai_report:
-            # 按 ### 拆分成章节
+            import re
+            # 过滤掉 AI 自带的标题前缀（如 "# 个人成长日报"、"## 日期" 等）
+            cleaned_lines = []
+            for line in ai_report.split("\n"):
+                stripped = line.strip()
+                # 跳过 AI 自带的顶部标题（不含章节号的）
+                if stripped.startswith("#") and not re.match(r'^[一二三四五][、.]', stripped):
+                    continue
+                # 去掉 ### 前缀，保留 "一、工作摘要"
+                if stripped.startswith("### "):
+                    stripped = stripped[4:]
+                cleaned_lines.append(stripped)
+            ai_report = "\n".join(cleaned_lines)
+
+            # 按中文数字序号拆分章节
+            section_pattern = re.compile(r'^(一|二|三|四|五)[、.]')
             sections = {}
             current_section = None
             current_lines = []
 
             for line in ai_report.split("\n"):
-                if line.startswith("### "):
+                match = section_pattern.match(line.strip())
+                if match:
                     # 保存上一个章节
                     if current_section:
                         sections[current_section] = "\n".join(current_lines).strip()
-                    current_section = line[4:].strip()
+                    current_section = line.strip()
                     current_lines = []
                 else:
                     current_lines.append(line)
@@ -194,32 +210,32 @@ def save_markdown_report(report_data: dict, target_date: Optional[date] = None) 
                 sections[current_section] = "\n".join(current_lines).strip()
 
             # 一、工作摘要
-            for key in ["一、工作摘要", "工作摘要", "工作概述"]:
-                if key in sections:
+            for key in sections:
+                if "一" in key and "摘要" in key:
                     content += f"## 📝 工作摘要\n\n{sections[key]}\n\n"
                     break
 
             # 二、应用使用
-            for key in ["二、应用使用", "应用使用"]:
-                if key in sections:
+            for key in sections:
+                if "二" in key and "应用" in key:
                     content += f"## 🖥️ 应用使用\n\n{sections[key]}\n\n"
                     break
 
             # 三、效率洞察
-            for key in ["三、效率洞察", "效率洞察"]:
-                if key in sections:
+            for key in sections:
+                if "三" in key and "洞察" in key:
                     content += f"## 🔍 效率洞察\n\n{sections[key]}\n\n"
                     break
 
             # 四、建议
-            for key in ["四、建议", "建议"]:
-                if key in sections:
+            for key in sections:
+                if "四" in key and "建议" in key:
                     content += f"## 💡 建议\n\n{sections[key]}\n\n"
                     break
 
             # 五、一句话总结
-            for key in ["五、一句话总结", "一句话总结", "总结"]:
-                if key in sections:
+            for key in sections:
+                if "五" in key and "总结" in key:
                     content += f"## 📌 总结\n\n{sections[key]}\n"
                     break
 
