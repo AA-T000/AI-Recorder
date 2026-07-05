@@ -244,36 +244,79 @@ body {{
     font-variant-numeric: tabular-nums;
 }}
 
-/* ===== 时间线 ===== */
-.tl-block {{
+/* ===== 时间线卡片 ===== */
+.tl-card {{
     display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 16px;
-    margin: 4px 0;
-    border-radius: 10px;
+    align-items: stretch;
+    gap: 14px;
+    padding: 16px 20px;
+    margin: 8px 0;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    transition: all 0.25s ease;
     font-size: 13px;
-    transition: background 0.2s;
 }}
-.tl-block:hover {{ background: rgba(255,255,255,0.04); }}
-.tl-line {{
-    width: 3px;
-    height: 32px;
-    border-radius: 2px;
-    flex-shrink: 0;
+.tl-card:hover {{
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.12);
+    transform: translateX(4px);
 }}
-.tl-time {{
-    color: rgba(255,255,255,0.35);
-    width: 45px;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    flex-shrink: 0;
-}}
-.tl-app {{ flex: 1; color: rgba(255,255,255,0.75); }}
-.tl-duration {{
+.tl-card-time {{
     color: rgba(255,255,255,0.3);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
+    padding-top: 2px;
+    width: 40px;
+    flex-shrink: 0;
+    text-align: right;
+}}
+.tl-card-dot {{
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 6px;
+    flex-shrink: 0;
+    box-shadow: 0 0 8px currentColor;
+}}
+.tl-card-body {{
+    flex: 1;
+    min-width: 0;
+}}
+.tl-card-top {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}}
+.tl-card-info {{
+    flex: 1;
+    min-width: 0;
+}}
+.tl-card-name {{
+    font-weight: 600;
+    color: rgba(255,255,255,0.85);
+    font-size: 14px;
+    margin-bottom: 2px;
+}}
+.tl-card-cat {{
+    font-size: 12px;
+    color: rgba(255,255,255,0.35);
+}}
+.tl-card-sub {{
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    margin-top: 6px;
+    padding-left: 52px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}}
+.tl-card-duration {{
+    color: rgba(255,255,255,0.3);
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    padding-top: 2px;
     flex-shrink: 0;
 }}
 
@@ -787,6 +830,36 @@ def _clean_app_name(raw: str) -> str:
     return name.replace("_", " ").title()
 
 
+def _get_app_icon_svg(category: str) -> str:
+    """返回应用图标 SVG（圆形彩色背景 + 分类图标）。"""
+    color_map = {
+        "development": "#3b82f6",
+        "browser": "#f97316",
+        "communication": "#eab308",
+        "design": "#a855f7",
+        "office": "#64748b",
+        "terminal": "#22c55e",
+        "other": "#6b7280",
+    }
+    bg_color = color_map.get(category, "#6b7280")
+    icon_map = {
+        "development": "⟨/⟩",
+        "browser": "🌐",
+        "communication": "💬",
+        "design": "🎨",
+        "office": "📄",
+        "terminal": "⬛",
+        "other": "•",
+    }
+    icon = icon_map.get(category, "•")
+    return (
+        f'<div style="width:40px;height:40px;border-radius:10px;'
+        f'background:{bg_color};display:flex;align-items:center;'
+        f'justify-content:center;font-size:18px;flex-shrink:0;">'
+        f'{icon}</div>'
+    )
+
+
 def _build_timeline_html(timeline: list) -> str:
     if not timeline:
         return ""
@@ -794,7 +867,7 @@ def _build_timeline_html(timeline: list) -> str:
     # 过滤掉太短的块（< 1分钟的不显示）
     filtered = [b for b in timeline if b.get("duration", 0) >= 60]
     if not filtered:
-        filtered = timeline  # 如果全部都很短，就显示全部
+        filtered = timeline
 
     html = ""
     for block in filtered:
@@ -806,21 +879,35 @@ def _build_timeline_html(timeline: list) -> str:
         name = CATEGORY_NAMES.get(block["category"], block["category"])
         apps = block.get("app_names", [])
         if isinstance(apps, list):
-            # 清理应用名：去掉 .exe，映射可读名称
             cleaned = [_clean_app_name(a) for a in apps[:2]]
             apps_str = ", ".join(cleaned)
         else:
             apps_str = _clean_app_name(str(apps))
+
+        # 窗口标题作为副标题（最多取第一个）
+        titles = block.get("titles", [])
+        subtitle = ""
+        if isinstance(titles, list) and titles:
+            subtitle = titles[0][:40]  # 截断过长标题
+
         html += f"""
-        <div class="tl-block">
-            <div class="tl-line" style="background:linear-gradient(180deg,{color},{color}44)"></div>
-            <span class="tl-time">{start}{f'-{end}' if end else ''}</span>
-            <span class="tl-icon">{icon}</span>
-            <span class="tl-app">{name} ({apps_str})</span>
-            <span class="tl-duration">{duration_min}m</span>
+        <div class="tl-card">
+            <div class="tl-card-time">{start}</div>
+            <div class="tl-card-dot" style="background:{color}"></div>
+            <div class="tl-card-body">
+                <div class="tl-card-top">
+                    {_get_app_icon_svg(block['category'])}
+                    <div class="tl-card-info">
+                        <div class="tl-card-name">{apps_str}</div>
+                        <div class="tl-card-cat">{icon} {name}</div>
+                    </div>
+                </div>
+                {'<div class="tl-card-sub">' + subtitle + '</div>' if subtitle else ''}
+            </div>
+            <div class="tl-card-duration">{duration_min}m</div>
         </div>"""
 
-    # 如果被过滤掉的块太多，显示折叠提示
+    # 折叠提示
     if len(timeline) - len(filtered) > 0:
         hidden = len(timeline) - len(filtered)
         html += f'<div style="text-align:center;padding:8px;color:rgba(255,255,255,0.25);font-size:12px;">还有 {hidden} 个短块（<1分钟）已折叠</div>'
