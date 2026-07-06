@@ -1,6 +1,7 @@
-"""HTML 仪表盘输出 — WebGL 流光背景。"""
+"""HTML 仪表盘输出 — WebGL 流光背景 + 侧边栏导航 + ECharts 图表。"""
 
 import os
+import json
 from datetime import date
 from typing import Optional
 
@@ -14,32 +15,29 @@ def _clean_ai_report(raw: str) -> str:
     lines = raw.split("\n")
     cleaned = []
     in_list = False
-    in_sublist = False
 
     for line in lines:
         stripped = line.strip()
 
-        # 跳过纯介绍性废话（第一段的问候语）
+        # 跳过纯介绍性废话
         if not cleaned and re.match(r'^你好|我是|这份日报|旨在帮助|个人成长日报', stripped):
             continue
 
         # 章节标题 ### → h4
         if stripped.startswith("### "):
             section_text = stripped[4:]
-            # 检查是否是已知章节
             section_titles = ["📋 今日工作清单", "🖥️ 应用使用", "🔍 效率洞察", "💡 效率建议", "📈 一句话总结"]
             if section_text in section_titles:
                 cleaned.append(f"<h4 style='color:rgba(255,255,255,0.7);margin:16px 0 8px;font-size:14px;'>{section_text}</h4>")
                 continue
             else:
-                # 其他 ### 标题去掉
                 continue
 
         # 去掉一级/二级标题
         if stripped.startswith("# ") or stripped.startswith("## "):
             continue
 
-        # 有序列表 1. 2. 3.
+        # 有序列表
         ordered_match = re.match(r'^(\d+)\.\s+(.*)', stripped)
         if ordered_match:
             if not in_list:
@@ -50,14 +48,13 @@ def _clean_ai_report(raw: str) -> str:
             cleaned.append(f"<li>{content}</li>")
             continue
 
-        # 无序列表 * 或 -
+        # 无序列表
         if stripped.startswith("* ") or stripped.startswith("- "):
             if not in_list:
                 cleaned.append("<ul style='padding-left:20px;margin:4px 0;'>")
                 in_list = True
             item = stripped[2:]
             item = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', item)
-            # 子列表缩进
             if item.startswith("    "):
                 cleaned.append(f"<li style='padding-left:16px'>{item.strip()}</li>")
             else:
@@ -69,7 +66,6 @@ def _clean_ai_report(raw: str) -> str:
             cleaned.append("</ul>")
             in_list = False
         if stripped:
-            # 处理 · 分隔的应用使用行
             if " · " in stripped and ("使用时长" in stripped or "主要用途" in stripped):
                 parts = [p.strip() for p in stripped.split(" · ")]
                 html_parts = []
@@ -106,6 +102,85 @@ def save_html_report(report_data: dict, target_date: Optional[date] = None) -> O
     timeline_html = _build_timeline_html(analysis.get("timeline", []))
     holes_html = _build_holes_html(analysis.get("holes", []))
 
+    # 构建专注时段 HTML（必须在模板之前）
+    focus_sessions = analysis.get("focus_sessions", [])
+    focus_html = ''
+    if focus_sessions:
+        focus_html = '<div class="focus-list">'
+        for fs in focus_sessions:
+            apps_clean = [_clean_app_name(a) for a in fs.get("app_names", [])]
+            apps_str = ", ".join(apps_clean) if apps_clean else "-"
+            focus_html += f'''
+        <div class="focus-item">
+            <span class="fi-time">{fs['start']} - {fs['end']}</span>
+            <span class="fi-app">{apps_str}</span>
+            <span class="fi-dur">{fs['duration']//60}分钟</span>
+        </div>'''
+        focus_html += '</div>'
+
+    # 准备 ECharts 数据
+    # 时间分布饼图数据
+    pie_data = []
+    for cat in analysis.get("category_stats", []):
+        pie_data.append({
+            "name": cat["name"],
+            "value": cat["seconds"] // 60,
+            "itemStyle": {"color": _get_category_color(cat["category"])}
+        })
+
+    # 每小时活跃度柱状图数据
+    hourly_labels = []
+    hourly_values = []
+    hourly_colors = []
+    hourly_bg_colors = []
+    hourly_colors_full = []
+    for h in range(24):
+        hh = f"{h:02d}"
+        if hh in analysis.get("hourly_distribution", {}):
+            hourly_labels.append(f"{h:02d}:00")
+            total_mins = analysis["hourly_distribution"][hh]["total_seconds"] // 60
+            hourly_values.append(total_mins)
+            # 根据活跃度着色
+            if total_mins >= 60:
+                hourly_colors_full.append("#4ade80")  # 绿色
+                hourly_bg_colors.append("#4ade8044")
+            elif total_mins >= 30:
+                hourly_colors_full.append("#fbbf24")  # 黄色
+                hourly_bg_colors.append("#fbbf2444")
+            else:
+                hourly_colors_full.append("#60a5fa")  # 蓝色
+                hourly_bg_colors.append("#60a5fa44")
+        else:
+            hourly_labels.append(f"{h:02d}:00")
+            hourly_values.append(0)
+            hourly_colors_full.append("#334155")
+            hourly_bg_colors.append("#33415544")
+
+    # 峰值时段高亮
+    peak_hours = analysis.get("peak_hours", [])
+    peak_labels = [f"{p['hour']}:00" for p in peak_hours]
+
+    # 专注时段数据
+    focus_sessions = analysis.get("focus_sessions", [])
+    focus_labels = [f"{fs['start']}-{fs['end']}" for fs in focus_sessions]
+    focus_durations = [fs["duration"] // 60 for fs in focus_sessions]
+    focus_apps = [", ".join(fs.get("app_names", [])) for fs in focus_sessions]
+
+    # ECharts 配置 JSON
+    chart_config = {
+        "pie_data": pie_data,
+        "hourly_labels": hourly_labels,
+        "hourly_values": hourly_values,
+        "hourly_colors": hourly_colors_full,
+        "hourly_bg_colors": hourly_bg_colors,
+        "peak_labels": peak_labels,
+        "focus_labels": focus_labels,
+        "focus_durations": focus_durations,
+        "focus_apps": focus_apps,
+        "peak_hours_data": peak_hours,
+    }
+    chart_json = json.dumps(chart_config, ensure_ascii=False)
+
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -140,13 +215,73 @@ body {{
     z-index: 1;
     background: radial-gradient(ellipse at 50% 0%, rgba(10,5,30,0.3) 0%, rgba(0,0,0,0.8) 60%);
     min-height: 100vh;
+    display: flex;
 }}
 
-/* ===== 主容器 ===== */
+/* ===== 侧边栏导航 ===== */
+.sidebar {{
+    width: 200px;
+    position: fixed;
+    top: 0; left: 0;
+    height: 100vh;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(20px);
+    border-right: 1px solid rgba(255,255,255,0.06);
+    padding: 24px 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+}}
+.sidebar-brand {{
+    font-size: 14px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.5);
+    padding: 0 20px;
+    margin-bottom: 24px;
+    letter-spacing: 1px;
+}}
+.sidebar-nav {{
+    flex: 1;
+}}
+.sidebar-nav a {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    color: rgba(255,255,255,0.4);
+    text-decoration: none;
+    font-size: 13px;
+    transition: all 0.2s;
+    border-left: 2px solid transparent;
+}}
+.sidebar-nav a:hover,
+.sidebar-nav a.active {{
+    color: rgba(255,255,255,0.9);
+    background: rgba(255,255,255,0.04);
+    border-left-color: #60a5fa;
+}}
+.sidebar-nav a .nav-icon {{
+    width: 20px;
+    text-align: center;
+    font-size: 14px;
+}}
+.sidebar-footer {{
+    padding: 16px 20px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.15);
+    border-top: 1px solid rgba(255,255,255,0.04);
+}}
+
+/* ===== 主内容区 ===== */
+.main-content {{
+    margin-left: 200px;
+    width: calc(100% - 200px);
+    min-height: 100vh;
+}}
 .container {{
-    max-width: 800px;
+    max-width: 900px;
     margin: 0 auto;
-    padding: 40px 24px 80px;
+    padding: 40px 32px 80px;
 }}
 
 /* ===== 头部 ===== */
@@ -249,7 +384,7 @@ body {{
 }}
 
 /* ===== 分区 ===== */
-.section {{ margin: 32px 0; }}
+.section {{ margin: 32px 0; scroll-margin-top: 20px; }}
 .section-header {{
     display: flex;
     align-items: center;
@@ -269,6 +404,28 @@ body {{
     font-size: 17px;
     font-weight: 600;
     color: rgba(255,255,255,0.8);
+}}
+
+/* ===== 图表容器 ===== */
+.chart-card {{
+    background: rgba(255,255,255,0.03);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 16px;
+    padding: 20px;
+    margin: 16px 0;
+}}
+.chart-container {{
+    width: 100%;
+    height: 300px;
+}}
+.chart-row {{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}}
+.chart-row .chart-container {{
+    height: 280px;
 }}
 
 /* ===== 时间分布 ===== */
@@ -400,6 +557,42 @@ body {{
     flex-shrink: 0;
 }}
 
+/* ===== 专注时段列表 ===== */
+.focus-list {{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 12px 0;
+}}
+.focus-item {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: rgba(74, 222, 128, 0.06);
+    border: 1px solid rgba(74, 222, 128, 0.12);
+    border-radius: 10px;
+    font-size: 13px;
+}}
+.focus-item .fi-time {{
+    color: rgba(255,255,255,0.5);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    width: 80px;
+    flex-shrink: 0;
+}}
+.focus-item .fi-app {{
+    flex: 1;
+    color: rgba(255,255,255,0.8);
+    font-weight: 500;
+}}
+.focus-item .fi-dur {{
+    color: #4ade80;
+    font-weight: 600;
+    font-size: 13px;
+    flex-shrink: 0;
+}}
+
 /* ===== 时间黑洞 ===== */
 .hole-card {{
     background: rgba(255,255,255,0.03);
@@ -424,7 +617,6 @@ body {{
     border-radius: 14px;
     padding: 20px;
     margin: 16px 0;
-    white-space: pre-wrap;
     line-height: 1.8;
     font-size: 14px;
     color: rgba(255,255,255,0.75);
@@ -448,7 +640,9 @@ body {{
 }}
 
 /* ===== 响应式 ===== */
-@media (max-width: 640px) {{
+@media (max-width: 768px) {{
+    .sidebar {{ display: none; }}
+    .main-content {{ margin-left: 0; width: 100%; }}
     .container {{ padding: 24px 16px 60px; }}
     .header h1 {{ font-size: 24px; }}
     .score-card {{ padding: 18px 20px; flex-direction: column; align-items: flex-start; }}
@@ -457,6 +651,7 @@ body {{
     .stat-card .value {{ font-size: 20px; }}
     .cat-val {{ width: 70px; font-size: 12px; }}
     .cat-name {{ width: 55px; font-size: 12px; }}
+    .chart-row {{ grid-template-columns: 1fr; }}
 }}
 
 @media (prefers-reduced-motion: reduce) {{
@@ -472,9 +667,27 @@ body {{
 <div id="wgsl-bg"></div>
 
 <div class="page-overlay">
+
+<!-- ===== 侧边栏导航 ===== -->
+<nav class="sidebar">
+    <div class="sidebar-brand">AI RECORDER</div>
+    <div class="sidebar-nav">
+        <a href="#overview" class="active"><span class="nav-icon">📊</span> 概览</a>
+        <a href="#charts"><span class="nav-icon">📈</span> 图表</a>
+        <a href="#distribution"><span class="nav-icon">⏰</span> 时间分布</a>
+        <a href="#timeline"><span class="nav-icon">🕐</span> 时间线</a>
+        <a href="#focus"><span class="nav-icon">🎯</span> 专注时段</a>
+        <a href="#holes"><span class="nav-icon">🔍</span> 时间黑洞</a>
+        <a href="#ai"><span class="nav-icon">🤖</span> AI 分析</a>
+    </div>
+    <div class="sidebar-footer">{target_date}</div>
+</nav>
+
+<!-- ===== 主内容 ===== -->
+<main class="main-content">
 <div class="container">
 
-    <div class="header">
+    <div class="header" id="overview">
         <h1>📊 {target_date} 工作日报</h1>
         <p class="subtitle">AI Recorder · 自动生成</p>
     </div>
@@ -506,7 +719,26 @@ body {{
         </div>
     </div>
 
-    <div class="section">
+    <!-- ===== 图表区域 ===== -->
+    <div class="section" id="charts">
+        <div class="section-header">
+            <div class="section-icon">📈</div>
+            <div class="section-title">数据可视化</div>
+        </div>
+        <div class="chart-row">
+            <div class="chart-card">
+                <div style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:8px;">🍩 时间分布</div>
+                <div id="chart-pie" class="chart-container"></div>
+            </div>
+            <div class="chart-card">
+                <div style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:8px;">📊 每小时活跃度</div>
+                <div id="chart-hourly" class="chart-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 时间分布 ===== -->
+    <div class="section" id="distribution">
         <div class="section-header">
             <div class="section-icon">⏰</div>
             <div class="section-title">时间分布</div>
@@ -514,7 +746,8 @@ body {{
         {categories_html if categories_html else '<div class="empty-state">暂无数据</div>'}
     </div>
 
-    <div class="section">
+    <!-- ===== 时间线 ===== -->
+    <div class="section" id="timeline">
         <div class="section-header">
             <div class="section-icon">📋</div>
             <div class="section-title">时间线</div>
@@ -522,28 +755,73 @@ body {{
         {timeline_html if timeline_html else '<div class="empty-state">暂无数据</div>'}
     </div>
 
-    <div class="section">
+    <!-- ===== 专注时段 ===== -->
+    <div class="section" id="focus">
+        <div class="section-header">
+            <div class="section-icon">🎯</div>
+            <div class="section-title">专注时段（≥20分钟）</div>
+        </div>
+        {focus_html if focus_sessions else '<div class="empty-state">今天没有 >=20 分钟的连续专注时段</div>'}
+    </div>
+
+    <!-- ===== 时间黑洞 ===== -->
+    <div class="section" id="holes">
         <div class="section-header">
             <div class="section-icon">🔍</div>
-            <div class="section-title">时间黑洞报告</div>
+            <div class="section-title">时间黑洞分析</div>
         </div>
         {holes_html if holes_html else '<div class="empty-state">✅ 未发现明显的时间黑洞，今天很专注！</div>'}
     </div>
 
-    {f'<div class="section"><div class="section-header"><div class="section-icon">🤖</div><div class="section-title">AI 分析</div></div><div class="ai-section">{ai_report}</div></div>' if ai_report else ''}
+    <!-- ===== AI 分析 ===== -->
+    <div class="section" id="ai">
+        <div class="section-header">
+            <div class="section-icon">🤖</div>
+            <div class="section-title">AI 分析</div>
+        </div>
+        {f'<div class="ai-section">{ai_report}</div>' if ai_report else ''}
+    </div>
 
     <div class="footer">AI Recorder · 你的智能工作伙伴</div>
 
 </div>
+</main>
 </div>
 
+<!-- ECharts CDN -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+
 <script>
-// ===== WebGL 流光背景 (基于 OGL Lightfall 着色器) =====
+// ===== 侧边栏导航高亮 =====
+(function() {{
+    var navLinks = document.querySelectorAll('.sidebar-nav a');
+    var sections = document.querySelectorAll('.section, .header');
+
+    function updateActiveNav() {{
+        var scrollPos = window.scrollY + 100;
+        for (var i = sections.length - 1; i >= 0; i--) {{
+            if (sections[i].offsetTop <= scrollPos) {{
+                var id = sections[i].getAttribute('id');
+                navLinks.forEach(function(link) {{
+                    link.classList.remove('active');
+                    if (link.getAttribute('href') === '#' + id) {{
+                        link.classList.add('active');
+                    }}
+                }});
+                break;
+            }}
+        }}
+    }}
+
+    window.addEventListener('scroll', updateActiveNav);
+    updateActiveNav();
+}})();
+
+// ===== WebGL 流光背景 =====
 (function() {{
     var container = document.getElementById('wgsl-bg');
     if (!container) return;
 
-    // 性能检测
     var isLowEnd = false;
     try {{
         var mem = navigator.deviceMemory || 4;
@@ -551,27 +829,22 @@ body {{
         if (mem <= 2 || cores <= 2) isLowEnd = true;
     }} catch(e) {{}}
 
-    // 颜色调色板
     var colors = [
-        [0.65, 0.78, 1.0],   // #A6C8FF - 浅蓝
-        [0.32, 0.15, 1.0],   // #5227FF - 深蓝紫
-        [1.0, 0.63, 0.98],   // #FF9FFC - 粉色
+        [0.65, 0.78, 1.0],
+        [0.32, 0.15, 1.0],
+        [1.0, 0.63, 0.98],
     ];
+    var bgColor = [0.04, 0.02, 0.12];
 
-    var bgColor = [0.04, 0.02, 0.12];  // 深紫黑背景
-
-    // 创建 WebGL 上下文
     var canvas = document.createElement('canvas');
     container.appendChild(canvas);
     var gl = canvas.getContext('webgl', {{ alpha: true, antialias: !isLowEnd }});
     if (!gl) {{
-        // WebGL 不可用，回退到纯色背景
         canvas.style.display = 'none';
         container.style.background = 'linear-gradient(135deg, #0a0a2e 0%, #1a0a2e 50%, #0a1a2e 100%)';
         return;
     }}
 
-    // 着色器源码 (基于 Lightfall fragment shader 简化版)
     var vertSrc = `
         attribute vec2 position;
         attribute vec2 uv;
@@ -689,7 +962,6 @@ body {{
         }}
     `;
 
-    // 编译着色器
     function compileShader(src, type) {{
         var shader = gl.createShader(type);
         gl.shaderSource(shader, src);
@@ -719,7 +991,6 @@ body {{
     }}
     gl.useProgram(program);
 
-    // 创建全屏三角形
     var positions = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
     var uvs = new Float32Array([0,0, 1,0, 0,1, 1,1]);
     var posBuf = gl.createBuffer();
@@ -736,7 +1007,6 @@ body {{
     gl.enableVertexAttribArray(uvLoc);
     gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 0, 0);
 
-    // Uniforms
     var locs = {{}};
     var uniformNames = [
         'iResolution','iMouse','iTime',
@@ -749,7 +1019,6 @@ body {{
         locs[uniformNames[i]] = gl.getUniformLocation(program, uniformNames[i]);
     }}
 
-    // 参数
     var params = {{
         speed: 0.5,
         streakCount: 2,
@@ -766,7 +1035,6 @@ body {{
         mouseDampening: 0.15,
     }};
 
-    // 鼠标
     var mouseTarget = [0, 0];
     var mouseCurrent = [0, 0];
     var lastTime = 0;
@@ -791,7 +1059,6 @@ body {{
         mouseTarget[1] = (rect.height - (t.clientY - rect.top)) * scaleY;
     }}, {{ passive: true }});
 
-    // 调整大小
     function resize() {{
         var rect = container.getBoundingClientRect();
         var w = Math.floor(rect.width * (isLowEnd ? 1 : 2));
@@ -805,17 +1072,13 @@ body {{
     var ro = new ResizeObserver(resize);
     ro.observe(container);
 
-    // 动画循环
     function animate(time) {{
         requestAnimationFrame(animate);
-
-        // 节流
-        if (time - lastTime < 33) return; // ~30fps
+        if (time - lastTime < 33) return;
         lastTime = time;
 
         gl.uniform1f(locs.iTime, time * 0.001);
 
-        // 鼠标平滑跟随
         var tau = Math.max(0.001, params.mouseDampening);
         var dt = 0.016;
         var factor = 1 - Math.exp(-dt / tau);
@@ -823,13 +1086,11 @@ body {{
         mouseCurrent[1] += (mouseTarget[1] - mouseCurrent[1]) * factor;
         gl.uniform2fv(locs.iMouse, mouseCurrent);
 
-        // 颜色
         gl.uniform3fv(locs.uColor0, colors[0]);
         gl.uniform3fv(locs.uColor1, colors[1]);
         gl.uniform3fv(locs.uColor2, colors[2]);
         gl.uniform3fv(locs.uBgColor, bgColor);
 
-        // 参数
         gl.uniform1f(locs.uSpeed, params.speed);
         gl.uniform1i(locs.uStreakCount, params.streakCount);
         gl.uniform1f(locs.uStreakWidth, params.streakWidth);
@@ -847,11 +1108,126 @@ body {{
     }}
     requestAnimationFrame(animate);
 
-    // 页面不可见时暂停
     document.addEventListener('visibilitychange', function() {{
         if (document.hidden) {{
             cancelAnimationFrame(animate);
         }}
+    }});
+}})();
+
+// ===== ECharts 图表 =====
+(function() {{
+    // 检查 ECharts 是否加载成功
+    if (typeof echarts === 'undefined') {{
+        console.warn('ECharts 加载失败，使用 CSS 图表回退');
+        return;
+    }}
+
+    var chartData = {chart_json};
+
+    // 饼图：时间分布
+    var pieChart = echarts.init(document.getElementById('chart-pie'), null, {{ renderer: 'canvas' }});
+    pieChart.setOption({{
+        tooltip: {{
+            trigger: 'item',
+            formatter: '{{b}}: {{c}}分钟 ({{d}}%)'
+        }},
+        series: [{{
+            type: 'pie',
+            radius: ['40%', '70%'],
+            center: ['50%', '55%'],
+            avoidLabelOverlap: true,
+            itemStyle: {{
+                borderRadius: 6,
+                borderColor: '#000',
+                borderWidth: 2
+            }},
+            label: {{
+                show: true,
+                position: 'outside',
+                formatter: '{{b}}\\n{{d}}%',
+                color: 'rgba(255,255,255,0.6)',
+                fontSize: 11
+            }},
+            labelLine: {{
+                lineStyle: {{ color: 'rgba(255,255,255,0.2)' }}
+            }},
+            data: chartData.pie_data
+        }}]
+    }});
+
+    // 柱状图：每小时活跃度
+    var hourlyChart = echarts.init(document.getElementById('chart-hourly'), null, {{ renderer: 'canvas' }});
+    hourlyChart.setOption({{
+        tooltip: {{
+            trigger: 'axis',
+            axisPointer: {{ type: 'shadow' }},
+            formatter: function(params) {{
+                var p = params[0];
+                return p.name + '<br/>' + p.seriesName + ': ' + p.value + '分钟';
+            }}
+        }},
+        grid: {{
+            left: '3%',
+            right: '4%',
+            bottom: '3%',
+            top: '10%',
+            containLabel: true
+        }},
+        xAxis: {{
+            type: 'category',
+            data: chartData.hourly_labels,
+            axisLabel: {{
+                color: 'rgba(255,255,255,0.4)',
+                fontSize: 10,
+                rotate: 0,
+                interval: 2
+            }},
+            axisLine: {{ lineStyle: {{ color: 'rgba(255,255,255,0.1)' }} }},
+            axisTick: {{ show: false }}
+        }},
+        yAxis: {{
+            type: 'value',
+            name: '分钟',
+            nameTextStyle: {{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }},
+            axisLabel: {{ color: 'rgba(255,255,255,0.4)', fontSize: 10 }},
+            splitLine: {{ lineStyle: {{ color: 'rgba(255,255,255,0.05)' }} }},
+            axisLine: {{ show: false }},
+            axisTick: {{ show: false }}
+        }},
+        series: [{{
+            name: '活跃度',
+            type: 'bar',
+            barWidth: '60%',
+            data: chartData.hourly_values.map(function(val, idx) {{
+                return {{
+                    value: val,
+                    itemStyle: {{
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            {{ offset: 0, color: chartData.hourly_colors[idx] }},
+                            {{ offset: 1, color: chartData.hourly_bg_colors[idx] }}
+                        ])
+                    }}
+                }};
+            }})
+        }}],
+        // 峰值时段标记
+        markLine: {{
+            symbol: 'none',
+            data: chartData.peak_labels.map(function(label) {{
+                var idx = chartData.hourly_labels.indexOf(label);
+                return {{
+                    xAxis: idx >= 0 ? idx : 0,
+                    label: {{ show: false }}
+                }};
+            }})
+        }}
+    }});
+
+    // 响应式
+    window.addEventListener('resize', function() {{
+        pieChart.resize();
+        hourlyChart.resize();
     }});
 }})();
 </script>
@@ -892,7 +1268,6 @@ def _load_aliases():
         try:
             settings = load_settings()
             raw = settings.get("app_aliases", {})
-            # 统一转为小写 key，不区分大小写匹配
             _aliases = {k.lower(): v for k, v in raw.items()}
         except Exception:
             pass
@@ -902,13 +1277,10 @@ def _clean_app_name(raw: str) -> str:
     """清理应用名：去掉 .exe、下划线、多余后缀，保留可读名称。"""
     _load_aliases()
     name = raw.strip().lower()
-    # 去掉 .exe
     if name.endswith(".exe"):
         name = name[:-4]
-    # 优先查配置表
     if name in _aliases:
         return _aliases[name]
-    # 首字母大写
     return name.replace("_", " ").title()
 
 
@@ -946,7 +1318,6 @@ def _build_timeline_html(timeline: list) -> str:
     if not timeline:
         return ""
 
-    # 过滤掉太短的块（< 1分钟的不显示）
     filtered = [b for b in timeline if b.get("duration", 0) >= 60]
     if not filtered:
         filtered = timeline
@@ -966,11 +1337,10 @@ def _build_timeline_html(timeline: list) -> str:
         else:
             apps_str = _clean_app_name(str(apps))
 
-        # 窗口标题作为副标题（最多取第一个）
         titles = block.get("titles", [])
         subtitle = ""
         if isinstance(titles, list) and titles:
-            subtitle = titles[0][:40]  # 截断过长标题
+            subtitle = titles[0][:40]
 
         html += f"""
         <div class="tl-card">
@@ -989,7 +1359,6 @@ def _build_timeline_html(timeline: list) -> str:
             <div class="tl-card-duration">{duration_min}m</div>
         </div>"""
 
-    # 折叠提示
     if len(timeline) - len(filtered) > 0:
         hidden = len(timeline) - len(filtered)
         html += f'<div style="text-align:center;padding:8px;color:rgba(255,255,255,0.25);font-size:12px;">还有 {hidden} 个短块（<1分钟）已折叠</div>'
