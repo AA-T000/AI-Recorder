@@ -14,39 +14,54 @@ def _clean_ai_report(raw: str) -> str:
     lines = raw.split("\n")
     cleaned = []
     in_list = False
+    in_sublist = False
 
     for line in lines:
         stripped = line.strip()
 
         # 跳过纯介绍性废话（第一段的问候语）
-        if not cleaned and re.match(r'^你好|我是|这份日报|旨在帮助', stripped):
+        if not cleaned and re.match(r'^你好|我是|这份日报|旨在帮助|个人成长日报', stripped):
             continue
 
-        # 去掉章节标题的 ### 前缀
+        # 章节标题 ### → h4
         if stripped.startswith("### "):
-            cleaned.append(f"<h4 style='color:rgba(255,255,255,0.7);margin:16px 0 8px;font-size:14px;'>{stripped[4:]}</h4>")
-            continue
+            section_text = stripped[4:]
+            # 检查是否是已知章节
+            section_titles = ["📋 今日工作清单", "🖥️ 应用使用", "🔍 效率洞察", "💡 效率建议", "📈 一句话总结"]
+            if section_text in section_titles:
+                cleaned.append(f"<h4 style='color:rgba(255,255,255,0.7);margin:16px 0 8px;font-size:14px;'>{section_text}</h4>")
+                continue
+            else:
+                # 其他 ### 标题去掉
+                continue
 
         # 去掉一级/二级标题
         if stripped.startswith("# ") or stripped.startswith("## "):
             continue
 
-        # 列表项
+        # 有序列表 1. 2. 3.
+        ordered_match = re.match(r'^(\d+)\.\s+(.*)', stripped)
+        if ordered_match:
+            if not in_list:
+                cleaned.append("<ol style='padding-left:24px;margin:4px 0;'>")
+                in_list = True
+            num, content = ordered_match.group(1), ordered_match.group(2)
+            content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', content)
+            cleaned.append(f"<li>{content}</li>")
+            continue
+
+        # 无序列表 * 或 -
         if stripped.startswith("* ") or stripped.startswith("- "):
             if not in_list:
                 cleaned.append("<ul style='padding-left:20px;margin:4px 0;'>")
                 in_list = True
             item = stripped[2:]
-            # 处理 ** 粗体
             item = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', item)
-            # 处理子列表缩进
+            # 子列表缩进
             if item.startswith("    "):
-                item = f"<li style='padding-left:16px'>{item.strip()}</li>"
-            elif item.startswith("**"):
-                item = f"<li style='font-weight:600'>{item}</li>"
+                cleaned.append(f"<li style='padding-left:16px'>{item.strip()}</li>")
             else:
-                item = f"<li>{item}</li>"
-            cleaned.append(item)
+                cleaned.append(f"<li>{item}</li>")
             continue
 
         # 段落
@@ -54,7 +69,17 @@ def _clean_ai_report(raw: str) -> str:
             cleaned.append("</ul>")
             in_list = False
         if stripped:
-            cleaned.append(f"<p style='margin:4px 0;line-height:1.6'>{stripped}</p>")
+            # 处理 · 分隔的应用使用行
+            if " · " in stripped and ("使用时长" in stripped or "主要用途" in stripped):
+                parts = [p.strip() for p in stripped.split(" · ")]
+                html_parts = []
+                for part in parts:
+                    part = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', part)
+                    html_parts.append(part)
+                cleaned.append(f'<p style="margin:6px 0;line-height:1.8">{"".join(html_parts)}</p>')
+            else:
+                stripped = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', stripped)
+                cleaned.append(f"<p style='margin:4px 0;line-height:1.6'>{stripped}</p>")
 
     if in_list:
         cleaned.append("</ul>")
@@ -866,7 +891,9 @@ def _load_aliases():
     if not _aliases:
         try:
             settings = load_settings()
-            _aliases = settings.get("app_aliases", {})
+            raw = settings.get("app_aliases", {})
+            # 统一转为小写 key，不区分大小写匹配
+            _aliases = {k.lower(): v for k, v in raw.items()}
         except Exception:
             pass
 

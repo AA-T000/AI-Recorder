@@ -113,10 +113,43 @@ class TrayIcon:
             show_toast("AI Recorder", "日报生成失败，请检查日志")
 
     def _show_stats(self, item: pystray.MenuItem):
-        from storage.database import get_total_records
-        total = get_total_records()
-        logger.info(f"当前共有 {total} 条记录")
-        show_toast("AI Recorder", f"当前共有 {total} 条记录")
+        from storage.database import get_total_records, get_records_range
+        from datetime import date, datetime
+
+        # 今天已记录时长
+        today = date.today()
+        start = datetime.combine(today, datetime.min.time())
+        end = datetime.now()
+
+        conn = None
+        try:
+            from storage.database import _get_conn
+            conn = _get_conn()
+            cursor = conn.execute(
+                """SELECT COALESCE(SUM(duration_seconds), 0) as total
+                   FROM records
+                   WHERE start_time >= ? AND start_time < ?""",
+                (start.isoformat(), end.isoformat()),
+            )
+            row = cursor.fetchone()
+            total_secs = row["total"] if row else 0
+            total_mins = total_secs // 60
+            total_h = total_mins // 60
+            rem_mins = total_mins % 60
+
+            if total_h > 0:
+                msg = f"今天已记录 {total_h}小时{rem_mins}分钟"
+            else:
+                msg = f"今天已记录 {total_mins}分钟"
+
+            # 总记录数也一起显示
+            total = get_total_records()
+            msg += f"\n累计 {total} 条记录"
+
+            show_toast("AI Recorder", msg)
+        finally:
+            if conn:
+                conn.close()
 
     def _open_reports(self, item: pystray.MenuItem):
         """打开报告文件夹。"""

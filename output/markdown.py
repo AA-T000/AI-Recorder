@@ -15,7 +15,8 @@ def _load_aliases():
     if not _aliases:
         try:
             settings = load_settings()
-            _aliases = settings.get("app_aliases", {})
+            raw = settings.get("app_aliases", {})
+            _aliases = {k.lower(): v for k, v in raw.items()}
         except Exception:
             pass
 
@@ -179,65 +180,60 @@ def save_markdown_report(report_data: dict, target_date: Optional[date] = None) 
             cleaned_lines = []
             for line in ai_report.split("\n"):
                 stripped = line.strip()
-                # 跳过 AI 自带的顶部标题（不含章节号的）
-                if stripped.startswith("#") and not re.match(r'^[一二三四五][、.]', stripped):
+                # 跳过 AI 自带的顶部标题（不含 emoji 章节号的）
+                if stripped.startswith("#") and not re.match(r'^### 📋|^### 🖥️|^### 🔍|^### 💡|^### 📈', stripped):
                     continue
-                # 去掉 ### 前缀，保留 "一、工作摘要"
+                # 去掉 ### 前缀
                 if stripped.startswith("### "):
                     stripped = stripped[4:]
                 cleaned_lines.append(stripped)
             ai_report = "\n".join(cleaned_lines)
 
-            # 按中文数字序号拆分章节
-            section_pattern = re.compile(r'^(一|二|三|四|五)[、.]')
+            # 按 emoji 章节标题拆分（用中文关键词匹配，兼容 emoji 编码问题）
+            section_keywords = ["今日工作清单", "应用使用", "效率洞察", "效率建议", "一句话总结"]
             sections = {}
             current_section = None
             current_lines = []
 
             for line in ai_report.split("\n"):
-                match = section_pattern.match(line.strip())
-                if match:
-                    # 保存上一个章节
+                stripped = line.strip()
+                # 检查是否包含章节关键词
+                found_keyword = None
+                for kw in section_keywords:
+                    if kw in stripped:
+                        found_keyword = kw
+                        break
+
+                if found_keyword:
                     if current_section:
                         sections[current_section] = "\n".join(current_lines).strip()
-                    current_section = line.strip()
+                    current_section = found_keyword
                     current_lines = []
                 else:
                     current_lines.append(line)
 
-            # 保存最后一个章节
             if current_section:
                 sections[current_section] = "\n".join(current_lines).strip()
 
-            # 一、工作摘要
-            for key in sections:
-                if "一" in key and "摘要" in key:
-                    content += f"## 📝 工作摘要\n\n{sections[key]}\n\n"
-                    break
+            # 一、今日工作清单
+            if "今日工作清单" in sections:
+                content += f"## 📋 今日工作清单\n\n{sections['今日工作清单']}\n\n"
 
             # 二、应用使用
-            for key in sections:
-                if "二" in key and "应用" in key:
-                    content += f"## 🖥️ 应用使用\n\n{sections[key]}\n\n"
-                    break
+            if "应用使用" in sections:
+                content += f"## 🖥️ 应用使用\n\n{sections['应用使用']}\n\n"
 
             # 三、效率洞察
-            for key in sections:
-                if "三" in key and "洞察" in key:
-                    content += f"## 🔍 效率洞察\n\n{sections[key]}\n\n"
-                    break
+            if "效率洞察" in sections:
+                content += f"## 🔍 效率洞察\n\n{sections['效率洞察']}\n\n"
 
             # 四、建议
-            for key in sections:
-                if "四" in key and "建议" in key:
-                    content += f"## 💡 建议\n\n{sections[key]}\n\n"
-                    break
+            if "效率建议" in sections:
+                content += f"## 💡 建议\n\n{sections['效率建议']}\n\n"
 
             # 五、一句话总结
-            for key in sections:
-                if "五" in key and "总结" in key:
-                    content += f"## 📌 总结\n\n{sections[key]}\n"
-                    break
+            if "一句话总结" in sections:
+                content += f"## 📌 总结\n\n{sections['一句话总结']}\n"
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(content)

@@ -16,7 +16,18 @@ def _clean_app_name_for_ai(raw: str) -> str:
     name = raw.strip().lower()
     if name.endswith(".exe"):
         name = name[:-4]
-    aliases = {
+    # 优先查配置表（不区分大小写）
+    try:
+        settings = load_settings()
+        aliases = settings.get("app_aliases", {})
+        # 构建小写 key 的映射
+        lower_aliases = {k.lower(): v for k, v in aliases.items()}
+        if name in lower_aliases:
+            return lower_aliases[name]
+    except Exception:
+        pass
+    # 内置兜底映射
+    fallback = {
         "pycharm64": "PyCharm",
         "code": "VS Code",
         "msedge": "Edge",
@@ -27,14 +38,14 @@ def _clean_app_name_for_ai(raw: str) -> str:
         "steamwebhelper": "Steam",
         "devenv": "Visual Studio",
         "unity": "Unity",
-        "guguai": "古怪加速器",
         "geek64": "Geek Uninstaller",
         "shellhost": "Shell Host",
         "ai-recorder": "AI Recorder",
         "powershell": "PowerShell",
         "cmd": "CMD",
+        "tslgame": "PUBG",
     }
-    return aliases.get(name, name.replace("_", " ").title())
+    return fallback.get(name, name.replace("_", " ").title())
 
 logger = logging.getLogger(__name__)
 
@@ -52,23 +63,27 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
     for hole in analysis.get("holes", []):
         holes.append(f"- [{hole['severity']}] {hole['title']}: {hole['detail']}")
 
-    # 构建应用使用详情（按分类聚合）
-    app_usage = []
-    for cat in analysis.get("category_stats", []):
-        cat_name = cat["name"]
-        cat_secs = cat["seconds"]
-        cat_mins = cat_secs // 60
-        # 找这个分类下最常用的应用
-        cat_blocks = [b for b in analysis.get("timeline", []) if b["category"] == cat["category"]]
-        app_counts = {}
-        for b in cat_blocks:
-            for a in b.get("app_names", []):
-                clean = _clean_app_name_for_ai(a)
-                app_counts[clean] = app_counts.get(clean, 0) + b.get("duration", 0)
-        if app_counts:
-            top_app = max(app_counts, key=app_counts.get)
-            top_app_mins = app_counts[top_app] // 60
-            app_usage.append(f"- {cat_name} ({cat_mins}分钟): {top_app} 占主导")
+    # 构建应用使用详情（从合并后的 timeline 重新计算，保证准确）
+    # 按应用聚合时长
+    app_totals = {}  # {应用名: 总秒数}
+    app_categories = {}  # {应用名: 分类名}
+    for block in analysis.get("timeline", []):
+        dur = block.get("duration", 0)
+        cat_name = CATEGORY_NAMES.get(block["category"], block["category"])
+        for app in block.get("app_names", []):
+            clean = _clean_app_name_for_ai(app)
+            app_totals[clean] = app_totals.get(clean, 0) + dur
+            app_categories[clean] = cat_name
+
+    # 按总时长排序，取前 5 个
+    top_apps = sorted(app_totals.items(), key=lambda x: x[1], reverse=True)[:5]
+    app_usage_lines = []
+    for app_name, total_secs in top_apps:
+        mins = total_secs // 60
+        cat = app_categories.get(app_name, "未知")
+        app_usage_lines.append(f"- {app_name} ({mins}分钟, {cat})")
+
+    app_usage_str = "\n".join(app_usage_lines) if app_usage_lines else "- 暂无数据"
 
     # 构建专注时段
     focus_items = []
@@ -105,7 +120,7 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
 {chr(10).join(categories) if categories else '- 暂无数据'}
 
 ## 应用使用详情
-{chr(10).join(app_usage) if app_usage else '- 暂无数据'}
+{app_usage_str}
 
 ## 专注时段（>=20分钟）
 {chr(10).join(focus_items) if focus_items else '- 今天没有 >=20 分钟的连续专注时段'}
@@ -116,28 +131,24 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
 ## 时间黑洞检测
 {chr(10).join(holes) if holes else '- 未发现明显的时间黑洞'}
 
-请严格按照以下格式输出（不要省略任何章节）：
+请严格按照以下格式输出，不要输出其他任何内容：
 
-注意：
-- 应用名已经是可读名称（如 PyCharm、VS Code、Steam），不要加 .exe 后缀
-- 应用名用粗体 **应用名** 而不是代码格式
+### 📋 今日工作清单
+用 3-5 条列出今天的主要活动块，格式：
+- **HH:MM - HH:MM**：简要描述活动（如"代码开发"、"浏览器浏览"），括号标注时长
 
-一、工作摘要
-用 2-3 句话概括今天主要做了什么工作，集中在哪些应用上。基于数据说话，不要编造。
+### 🖥️ 应用使用
+列出使用最多的 3-5 个应用，格式：
+**应用名** · 使用时长：XX 分钟 · 主要用途：XXX
+每行一个应用，用 · 分隔，紧凑排列不要分行
 
-二、应用使用
-列出使用最多的 3-5 个应用，每个应用给出：
-- **应用名**
-- 使用时长
-- 主要用途（根据窗口标题推断，如"代码编写"、"查阅资料"等）
+### 🔍 效率洞察
+给出 1-2 条核心洞察，基于数据说话
 
-三、效率洞察
-基于数据给出 1-2 条核心洞察（如"上午效率高于下午"、"碎片化严重"等）
-
-四、建议
+### 💡 效率建议
 给出 2-3 条具体可行的改进建议
 
-五、一句话总结
+### 📈 一句话总结
 用一句话概括今天的工作状态
 """
 
