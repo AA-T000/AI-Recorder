@@ -142,7 +142,7 @@ def save_markdown_report(report_data: dict, target_date: Optional[date] = None) 
         eff = analysis.get("efficiency", 0)
         earliest = analysis.get("earliest", "?")
         latest = analysis.get("latest", "?")
-        work_mins = analysis.get("work_duration", 0) // 60
+        work_mins = analysis.get("total_actual_seconds", 0) // 60
         bar = _score_bar(eff)
 
         content += "## 📈 概览\n\n"
@@ -239,3 +239,58 @@ def save_markdown_report(report_data: dict, target_date: Optional[date] = None) 
         f.write(content)
 
     return filepath
+
+
+def _parse_and_render_ai_report(ai_report: str) -> str:
+    """将 AI 报告解析为 HTML，供周报等复用。"""
+    import re
+    if not ai_report:
+        return ""
+
+    # 过滤 AI 自带的标题前缀
+    cleaned_lines = []
+    for line in ai_report.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#") and not re.match(r'^📋|🖥️|🔍|💡|📈', stripped):
+            continue
+        if stripped.startswith("### "):
+            stripped = stripped[4:]
+        cleaned_lines.append(stripped)
+    ai_report = "\n".join(cleaned_lines)
+
+    # 按章节关键词拆分
+    section_keywords = ["本周概览", "应用 TOP", "效率洞察", "下周建议", "一句话总结"]
+    sections = {}
+    current_section = None
+    current_lines = []
+
+    for line in ai_report.split("\n"):
+        found = None
+        for kw in section_keywords:
+            if kw in line.strip():
+                found = kw
+                break
+        if found:
+            if current_section:
+                sections[current_section] = "\n".join(current_lines).strip()
+            current_section = found
+            current_lines = []
+        else:
+            current_lines.append(line)
+    if current_section:
+        sections[current_section] = "\n".join(current_lines).strip()
+
+    # 渲染为 HTML
+    result = ""
+    titles = {
+        "本周概览": "## 📋 本周概览",
+        "应用 TOP": "## 🖥️ 应用 TOP",
+        "效率洞察": "## 🔍 效率洞察",
+        "下周建议": "## 💡 下周建议",
+        "一句话总结": "## 📌 总结",
+    }
+    for kw, title in titles.items():
+        if kw in sections:
+            result += f"{title}\n\n{sections[kw]}\n\n"
+
+    return result

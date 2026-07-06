@@ -40,6 +40,7 @@ class TrayIcon:
             pystray.MenuItem("■ 停止记录", self._stop),
             pystray.MenuItem("生成昨天日报", self._generate_report),
             pystray.MenuItem("生成今天日报", self._generate_today_report),
+            pystray.MenuItem("生成上周周报", self._generate_weekly_report),
             pystray.MenuItem("查看统计", self._show_stats),
             pystray.MenuItem("打开报告文件夹", self._open_reports),
             pystray.MenuItem("退出", self._quit),
@@ -111,6 +112,32 @@ class TrayIcon:
             show_toast("AI Recorder", f"Markdown 日报已保存: {os.path.basename(md_path)}")
         else:
             show_toast("AI Recorder", "日报生成失败，请检查日志")
+
+    def _generate_weekly_report(self, item: pystray.MenuItem):
+        from datetime import date, timedelta
+        from core.weekly import generate_week_report, save_weekly_markdown_report, save_weekly_html_report
+
+        # 计算上周周一
+        today = date.today()
+        weekday = today.weekday()  # 0=周一
+        last_monday = today - timedelta(days=weekday + 7)
+        last_sunday = last_monday + timedelta(days=6)
+
+        logger.info(f"正在生成 {last_monday} ~ {last_sunday} 的周报...")
+        show_toast("AI Recorder", "正在生成上周周报...")
+
+        report_data = generate_week_report(last_monday, last_sunday)
+
+        md_path = save_weekly_markdown_report(report_data, last_monday)
+        html_path = save_weekly_html_report(report_data, last_monday)
+
+        if md_path and html_path:
+            msg = f"周报已生成\nMarkdown: {os.path.basename(md_path)}\nHTML: {os.path.basename(html_path)}"
+            show_toast("AI Recorder", msg)
+        elif md_path:
+            show_toast("AI Recorder", f"Markdown 周报已保存: {os.path.basename(md_path)}")
+        else:
+            show_toast("AI Recorder", "周报生成失败，请检查日志")
 
     def _show_stats(self, item: pystray.MenuItem):
         from storage.database import get_total_records, get_records_range

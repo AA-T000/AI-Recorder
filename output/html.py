@@ -711,7 +711,7 @@ body {{
         </div>
         <div class="stat-card">
             <div class="label">总时长</div>
-            <div class="value">{analysis.get('work_duration', 0)//60} 分钟</div>
+            <div class="value">{analysis.get('total_actual_seconds', 0)//60} 分钟</div>
         </div>
         <div class="stat-card">
             <div class="label">记录数</div>

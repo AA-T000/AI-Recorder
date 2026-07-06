@@ -112,7 +112,7 @@ def _build_prompt(analysis: dict, settings: dict) -> str:
 {analysis['date']}
 
 ## 概览
-- 工作时长: {analysis.get('work_duration', 0) // 60} 分钟
+- 工作时长: {analysis.get('total_actual_seconds', 0) // 60} 分钟
 - 最早活动: {analysis.get('earliest', '?')} | 最晚活动: {analysis.get('latest', '?')}
 - 效率评分: {analysis.get('efficiency', 0)}/100
 

@@ -373,10 +373,13 @@ def analyze_day(target_date: date, settings: Optional[dict] = None) -> Dict[str,
     # 计算效率
     efficiency = calculate_efficiency(blocks, holes)
 
+    # 实际工作时长（合并后的 timeline 块总时长）
+    total_actual_seconds = sum(b.get("duration", 0) for b in blocks)
+
     # 最早和最晚记录
     start_time = min(_parse_iso(r["start_time"]) for r in records)
     end_time = max(_parse_iso(r["end_time"]) for r in records if r.get("end_time"))
-    work_duration = int((end_time - start_time).total_seconds())
+    work_span = int((end_time - start_time).total_seconds())
 
     # 专注时段
     focus_sessions = []
@@ -405,21 +408,22 @@ def analyze_day(target_date: date, settings: Optional[dict] = None) -> Dict[str,
     return {
         "date": target_date.isoformat(),
         "has_data": True,
-        "timeline": blocks,  # 合并后的粗粒度时间线
+        "timeline": blocks,
         "category_stats": category_stats,
         "total_seconds": total_seconds,
-        "work_duration": work_duration,
+        "total_actual_seconds": total_actual_seconds,  # 实际工作时长（合并后）
+        "work_duration": work_span,  # 最早到最晚跨度
         "earliest": start_time.strftime("%H:%M"),
         "latest": end_time.strftime("%H:%M"),
         "hole_count": len(holes),
         "holes": holes,
         "efficiency": efficiency,
         "record_count": len(records),
-        "block_count": len(blocks),  # 合并后的块数
-        "focus_sessions": focus_sessions,  # 专注时段列表
-        "peak_hours": peak_hours,  # 峰值时段
-        "hourly_distribution": hourly_dist,  # 每小时活跃度
-        "integrity_issues": integrity_issues,  # 数据完整性检查
+        "block_count": len(blocks),
+        "focus_sessions": focus_sessions,
+        "peak_hours": peak_hours,
+        "hourly_distribution": hourly_dist,
+        "integrity_issues": integrity_issues,
     }
 
 
