@@ -30,45 +30,70 @@ def generate_week_report(start_date: date, end_date: date) -> dict:
     from core.reporter import _clean_app_name_for_ai
 
     settings = load_settings()
-    weekly_data = analyze_week(7)
 
-    if not weekly_data.get("trend"):
+    # 按指定日期范围查询数据，而不是固定查最近7天
+    from storage.database import get_records_range
+    from core.analyzer import analyze_day, build_coalesced_timeline, detect_boreholes, calculate_efficiency, CATEGORY_NAMES, CATEGORY_ICONS
+    from datetime import timedelta
+
+    trend = []
+    overall_categories = {}
+    total_seconds = 0
+    total_records = 0
+    current = start_date
+    while current <= end_date:
+        day_analysis = analyze_day(current, settings)
+        if day_analysis.get("has_data"):
+            day_total = day_analysis.get("total_seconds", 0)
+            total_seconds += day_total
+            total_records += day_analysis.get("record_count", 0)
+            trend.append({
+                "date": current.isoformat(),
+                "total_seconds": day_total,
+                "record_count": day_analysis.get("record_count", 0),
+                "categories": day_analysis.get("category_stats", []),
+            })
+            for cat in day_analysis.get("category_stats", []):
+                c = cat["category"]
+                s = cat["seconds"]
+                overall_categories[c] = overall_categories.get(c, 0) + s
+        current += timedelta(days=1)
+
+    if not trend:
         return {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
-            "weekly_data": weekly_data,
+            "weekly_data": {},
             "ai_report": None,
             "success": False,
-            "error": "没有足够的数据生成周报",
+            "error": "该日期范围内没有数据",
         }
 
-    # 构建周报数据供 AI 使用
+    # 计算整体分类占比
+    grand_total = sum(overall_categories.values())
+    overall_cats = []
+    for cat, secs in sorted(overall_categories.items(), key=lambda x: x[1], reverse=True):
+        overall_cats.append({
+            "category": cat,
+            "name": CATEGORY_NAMES.get(cat, cat),
+            "icon": CATEGORY_ICONS.get(cat, "⬜"),
+            "total_seconds": secs,
+            "percentage": round(secs / grand_total * 100, 1) if grand_total > 0 else 0,
+        })
+
+    total_days = len(trend)
+    avg_daily = total_seconds // total_days if total_days > 0 else 0
+
     week_summary = {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
-        "total_days": weekly_data["total_days"],
-        "total_hours": weekly_data["total_seconds"] // 3600,
-        "total_minutes": weekly_data["total_seconds"] // 60,
-        "avg_daily_minutes": weekly_data["avg_daily_seconds"] // 60,
-        "total_records": weekly_data["total_records"],
-        "overall_categories": weekly_data["overall_categories"],
-        "trend": [],
+        "total_days": total_days,
+        "total_seconds": total_seconds,
+        "total_records": total_records,
+        "avg_daily_seconds": avg_daily,
+        "overall_categories": overall_cats,
+        "trend": trend,
     }
-
-    for day in weekly_data.get("trend", []):
-        day_total_mins = day["total_seconds"] // 60
-        day_h = day_total_mins // 60
-        day_m = day_total_mins % 60
-        day_str = f"{day['date']} 共 {day_total_mins}分钟"
-        if day_h > 0:
-            day_str = f"{day['date']} 共 {day_h}小时{day_m}分钟"
-
-        # 找当天最高效的分类
-        if day.get("categories"):
-            top_cat = max(day["categories"], key=lambda c: c.get("total_seconds", 0))
-            top_cat_name = CATEGORY_NAMES.get(top_cat["category"], top_cat["category"])
-            day_str += f"，主力：{top_cat_name}"
-        week_summary["trend"].append(day_str)
 
     # 调用 AI 生成周报摘要
     try:
@@ -84,7 +109,10 @@ def generate_week_report(start_date: date, end_date: date) -> dict:
             f"- {c['icon']} {c['name']}: {c['percentage']}% ({c['total_seconds']//60}分钟)"
             for c in week_summary["overall_categories"]
         )
-        trend_str = "\n".join(week_summary["trend"])
+        trend_str = "\n".join(
+            f"- {d['date']}: {d['total_seconds']//60}分钟"
+            for d in week_summary["trend"]
+        )
 
         prompt = f"""你是一个个人成长复盘助手。根据以下一周的工作数据，生成一份中文周报。
 
@@ -92,8 +120,8 @@ def generate_week_report(start_date: date, end_date: date) -> dict:
 {week_summary['start_date']} ~ {week_summary['end_date']}
 
 ## 概览
-- 总工作时长: {week_summary['total_minutes']}分钟（约{week_summary['total_hours']}小时）
-- 日均时长: {week_summary['avg_daily_minutes']}分钟
+- 总工作时长: {week_summary['total_seconds']//60}分钟（约{week_summary['total_seconds']//3600}小时）
+- 日均时长: {week_summary['avg_daily_seconds']//60}分钟
 - 记录总数: {week_summary['total_records']}
 
 ## 本周趋势
@@ -256,17 +284,8 @@ def save_weekly_html_report(report_data: dict, start_date: Optional[date] = None
     ai_report = _parse_and_render_ai_report(ai_report_raw) if ai_report_raw else ""
 
     # 每日趋势数据
-    trend_dates = [d.split(" ")[0] for d in report_data.get("trend", [])]
-    trend_hours = []
-    for day_str in report_data.get("trend", []):
-        # 解析 "2026-07-06 共 XX小时XX分钟"
-        import re
-        match = re.search(r'共 (\d+)小时(\d+)分钟', day_str)
-        if match:
-            hours = int(match.group(1)) + int(match.group(2)) / 60
-            trend_hours.append(round(hours, 1))
-        else:
-            trend_hours.append(0)
+    trend_dates = [d["date"] for d in report_data.get("trend", [])]
+    trend_hours = [round(d["total_seconds"] / 3600, 1) for d in report_data.get("trend", [])]
 
     # 分类占比
     pie_data = []
