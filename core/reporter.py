@@ -243,7 +243,7 @@ def generate_report(target_date: Optional[date] = None) -> dict:
             f"{api_base.rstrip('/')}/v1/chat/completions",
             headers=headers,
             json=payload,
-            timeout=60,
+            timeout=120,
         )
         resp.raise_for_status()
 

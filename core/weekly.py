@@ -44,7 +44,8 @@ def generate_week_report(start_date: date, end_date: date) -> dict:
     while current <= end_date:
         day_analysis = analyze_day(current, settings)
         if day_analysis.get("has_data"):
-            day_total = day_analysis.get("total_seconds", 0)
+            # 使用 total_actual_seconds（合并后的 timeline 总秒数）
+            day_total = day_analysis.get("total_actual_seconds", 0)
             total_seconds += day_total
             total_records += day_analysis.get("record_count", 0)
             trend.append({
@@ -53,6 +54,7 @@ def generate_week_report(start_date: date, end_date: date) -> dict:
                 "record_count": day_analysis.get("record_count", 0),
                 "categories": day_analysis.get("category_stats", []),
             })
+            # 从 category_stats 累计分类秒数
             for cat in day_analysis.get("category_stats", []):
                 c = cat["category"]
                 s = cat["seconds"]
@@ -165,7 +167,7 @@ def generate_week_report(start_date: date, end_date: date) -> dict:
             f"{api_base.rstrip('/')}/v1/chat/completions",
             headers=headers,
             json=payload,
-            timeout=60,
+            timeout=120,
         )
         resp.raise_for_status()
         result = resp.json()
@@ -203,8 +205,14 @@ def save_weekly_markdown_report(report_data: dict, start_date: Optional[date] = 
 
         # 每日趋势
         content += "## 📅 每日趋势\n\n"
-        for day in report_data.get("trend", []):
-            content += f"- {day}\n"
+        for d in report_data.get("trend", []):
+            secs = d["total_seconds"]
+            h = secs // 3600
+            m = (secs % 3600) // 60
+            if h > 0:
+                content += f"- {d['date']}: {h}小时{m}分钟\n"
+            else:
+                content += f"- {d['date']}: {m}分钟\n"
         content += "\n"
 
         # 分类占比
