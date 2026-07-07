@@ -215,7 +215,6 @@ body {{
     z-index: 1;
     background: radial-gradient(ellipse at 50% 0%, rgba(10,5,30,0.3) 0%, rgba(0,0,0,0.8) 60%);
     min-height: 100vh;
-    display: flex;
 }}
 
 /* ===== 侧边栏导航 ===== */
