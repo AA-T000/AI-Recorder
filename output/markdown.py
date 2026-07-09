@@ -28,6 +28,11 @@ CATEGORY_NAMES = {
     "design": "设计",
     "office": "办公",
     "terminal": "终端",
+    "gaming": "游戏",
+    "finance": "金融",
+    "network": "网络",
+    "system": "系统工具",
+    "audio": "音频",
     "other": "其他",
 }
 
@@ -38,6 +43,11 @@ CATEGORY_ICONS = {
     "design": "🟪",
     "office": "📄",
     "terminal": "⬛",
+    "gaming": "🎮",
+    "finance": "📈",
+    "network": "🌐",
+    "system": "⚙️",
+    "audio": "🎵",
     "other": "⬜",
 }
 

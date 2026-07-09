@@ -78,7 +78,7 @@ def generate_week_report(start_date: date, end_date: date) -> dict:
         overall_cats.append({
             "category": cat,
             "name": CATEGORY_NAMES.get(cat, cat),
-            "icon": CATEGORY_ICONS.get(cat, "⬜"),
+            "icon": CATEGORY_ICONS.get(cat, "·"),
             "total_seconds": secs,
             "percentage": round(secs / grand_total * 100, 1) if grand_total > 0 else 0,
         })
@@ -134,20 +134,20 @@ def generate_week_report(start_date: date, end_date: date) -> dict:
 
 请严格按照以下格式输出：
 
-### 📋 本周概览
+### 本周概览
 用 2-3 句话概括本周整体工作状态
 
-### 🖥️ 本周应用 TOP 5
+### 应用 TOP 5
 列出使用最多的 5 个应用（如果有数据），格式：
 **应用名** · 使用时长：XX 分钟 · 主要用途：XXX
 
-### 🔍 效率洞察
+### 效率洞察
 给出 1-2 条核心洞察（如"周三效率最高"、"工作日 vs 周末差异"等）
 
-### 💡 下周建议
+### 下周建议
 给出 2-3 条具体可行的改进建议
 
-### 📈 一句话总结
+### 一句话总结
 用一句话概括本周的工作状态
 """
 
@@ -194,9 +194,9 @@ def save_weekly_markdown_report(report_data: dict, start_date: Optional[date] = 
     error = report_data.get("error", "")
 
     if not success:
-        content = f"# 📊 周报 {start_date} ~ {end_date}\n\n> ⚠️ 生成失败: {error}\n"
+        content = f"# 周报 {start_date} ~ {end_date}\n\n> 生成失败: {error}\n"
     else:
-        content = f"# 📊 周报 {start_date} ~ {end_date}\n\n"
+        content = f"# 周报 {start_date} ~ {end_date}\n\n"
 
         # 概览
         content += f"**总时长**: {_seconds_to_hm(report_data.get('total_seconds', 0))}  "
@@ -204,7 +204,7 @@ def save_weekly_markdown_report(report_data: dict, start_date: Optional[date] = 
         content += f"**记录数**: {report_data.get('total_records', 0)}\n\n"
 
         # 每日趋势
-        content += "## 📅 每日趋势\n\n"
+        content += "## 每日趋势\n\n"
         for d in report_data.get("trend", []):
             secs = d["total_seconds"]
             h = secs // 3600
@@ -216,7 +216,7 @@ def save_weekly_markdown_report(report_data: dict, start_date: Optional[date] = 
         content += "\n"
 
         # 分类占比
-        content += "## 📊 分类占比\n\n"
+        content += "## 分类占比\n\n"
         for cat in report_data.get("overall_categories", []):
             mins = cat["total_seconds"] // 60
             content += f"- {cat['icon']} {cat['name']}: {cat['percentage']}% ({mins}分钟)\n"
@@ -229,7 +229,7 @@ def save_weekly_markdown_report(report_data: dict, start_date: Optional[date] = 
             cleaned_lines = []
             for line in ai_report.split("\n"):
                 stripped = line.strip()
-                if stripped.startswith("#") and not re.match(r'^📋|🖥️|🔍|💡|📈', stripped):
+                if stripped.startswith("#") and not re.match(r'^本周概览|^应用 TOP|^效率洞察|^下周建议|^一句话总结', stripped):
                     continue
                 if stripped.startswith("### "):
                     stripped = stripped[4:]
@@ -258,11 +258,11 @@ def save_weekly_markdown_report(report_data: dict, start_date: Optional[date] = 
                 sections[current_section] = "\n".join(current_lines).strip()
 
             titles = {
-                "本周概览": "## 📋 本周概览",
-                "应用 TOP": "## 🖥️ 应用 TOP",
-                "效率洞察": "## 🔍 效率洞察",
-                "下周建议": "## 💡 下周建议",
-                "一句话总结": "## 📌 总结",
+                "本周概览": "## 本周概览",
+                "应用 TOP": "## 应用 TOP",
+                "效率洞察": "## 效率洞察",
+                "下周建议": "## 下周建议",
+                "一句话总结": "## 总结",
             }
             for kw, title in titles.items():
                 if kw in sections:
@@ -274,8 +274,27 @@ def save_weekly_markdown_report(report_data: dict, start_date: Optional[date] = 
     return filepath
 
 
+def _get_phosphor_palette(category: str) -> str:
+    """磷光终端风格配色。"""
+    hue_shifts = {
+        "development": "#00ff88",
+        "browser": "#f0c040",
+        "communication": "#50b0ff",
+        "design": "#c070ff",
+        "office": "#a0a0a0",
+        "terminal": "#00ff88",
+        "gaming": "#ff5050",
+        "finance": "#40d0a0",
+        "network": "#40c0e0",
+        "system": "#8080ff",
+        "audio": "#ff70b0",
+        "other": "#606060",
+    }
+    return hue_shifts.get(category, "#00ff88")
+
+
 def save_weekly_html_report(report_data: dict, start_date: Optional[date] = None) -> Optional[str]:
-    """保存周报为 HTML 文件。"""
+    """保存周报为 HTML 文件 — 磷光终端风。"""
     if start_date is None:
         start_date = date.fromisoformat(report_data.get("start_date", date.today().isoformat()))
 
@@ -294,14 +313,16 @@ def save_weekly_html_report(report_data: dict, start_date: Optional[date] = None
     # 每日趋势数据
     trend_dates = [d["date"] for d in report_data.get("trend", [])]
     trend_hours = [round(d["total_seconds"] / 3600, 1) for d in report_data.get("trend", [])]
+    max_hours = max(trend_hours) if trend_hours else 1
 
     # 分类占比
     pie_data = []
     for cat in report_data.get("overall_categories", []):
+        color = _get_phosphor_palette(cat["category"])
         pie_data.append({
             "name": cat["name"],
             "value": cat["total_seconds"] // 60,
-            "itemStyle": {"color": _get_category_color(cat["category"])}
+            "itemStyle": {"color": color}
         })
 
     chart_json = json.dumps({
@@ -310,162 +331,281 @@ def save_weekly_html_report(report_data: dict, start_date: Optional[date] = None
         "trend_hours": trend_hours,
     }, ensure_ascii=False)
 
+    total_hours_val = report_data.get('total_seconds', 0) // 3600
+    avg_mins_val = report_data.get('avg_daily_seconds', 0) // 60
+
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📊 周报 {start_date} ~ {end_date} — AI Recorder</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js">
+<title>周报 {start_date} ~ {end_date}</title>
 <style>
+/* ===== 基础 ===== */
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0a0a1a;
-    color: #e5e5e5;
-}}
-.container {{
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 40px 24px 80px;
-}}
-.header {{ margin-bottom: 32px; text-align: center; }}
-.header h1 {{
-    font-size: 28px;
-    font-weight: 800;
-    background: linear-gradient(135deg, #60a5fa, #a78bfa, #f472b6);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}}
-.header .subtitle {{ color: rgba(255,255,255,0.3); font-size: 13px; margin-top: 6px; }}
 
-.overview-grid {{
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    margin: 24px 0;
+/* ===== 字体：JetBrains Mono（终端） ===== */
+body {{
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+    background: #0a0e0a;
+    color: #c8ffc8;
+    line-height: 1.6;
 }}
-.overview-card {{
-    background: rgba(255,255,255,0.04);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 14px;
-    padding: 20px 16px;
+
+/* ===== Grain 噪点层 ===== */
+body::before {{
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    pointer-events: none;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 256px 256px;
+}}
+
+/* ===== 暗角 ===== */
+body::after {{
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 30%, transparent 50%, rgba(0,0,0,0.3) 100%);
+}}
+
+/* ===== 容器 ===== */
+.wrap {{
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 24px;
+    position: relative;
+    z-index: 1;
+}}
+
+/* ===== 头部 ===== */
+.header {{
+    padding: 48px 0 32px;
+    border-bottom: 1px solid rgba(0,255,136,0.08);
+    margin-bottom: 32px;
     text-align: center;
 }}
-.overview-card .label {{ font-size: 11px; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }}
-.overview-card .value {{ font-size: 28px; font-weight: 700; color: #f0f0f0; }}
+.header-period {{
+    font-size: 11px;
+    color: rgba(0,255,136,0.3);
+    letter-spacing: 0.15em;
+    margin-bottom: 8px;
+}}
+.header-title {{
+    font-size: 24px;
+    font-weight: 700;
+    color: #e0ffe0;
+    letter-spacing: -0.01em;
+}}
+.header-brand {{
+    font-size: 11px;
+    color: rgba(0,255,136,0.2);
+    margin-top: 8px;
+    letter-spacing: 0.1em;
+}}
 
-.section {{ margin: 32px 0; }}
-.section-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }}
-.section-icon {{ width: 28px; height: 28px; background: linear-gradient(135deg, rgba(96,165,250,0.2), rgba(167,139,250,0.2)); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; }}
-.section-title {{ font-size: 17px; font-weight: 600; color: rgba(255,255,255,0.8); }}
+/* ===== 统计行 ===== */
+.stats-row {{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0;
+    margin-bottom: 40px;
+    border-top: 1px solid rgba(0,255,136,0.08);
+    border-bottom: 1px solid rgba(0,255,136,0.08);
+}}
+.stat-item {{
+    padding: 16px 12px;
+    text-align: center;
+    border-right: 1px solid rgba(0,255,136,0.04);
+}}
+.stat-item:last-child {{ border-right: none; }}
+.stat-item .label {{
+    font-size: 10px;
+    color: rgba(200,255,200,0.3);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}}
+.stat-item .value {{
+    font-size: 24px;
+    font-weight: 600;
+    color: #d0ffd0;
+    font-variant-numeric: tabular-nums;
+}}
 
+/* ===== 分区 ===== */
+.section {{ margin: 36px 0; }}
+.section-header {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(0,255,136,0.06);
+}}
+.section-num {{
+    font-size: 10px;
+    color: rgba(0,255,136,0.25);
+    font-variant-numeric: tabular-nums;
+    min-width: 20px;
+}}
+.section-title {{
+    font-size: 14px;
+    font-weight: 600;
+    color: rgba(200,255,200,0.7);
+    letter-spacing: 0.05em;
+}}
+
+/* ===== 图表容器 ===== */
 .chart-card {{
-    background: rgba(255,255,255,0.03);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 16px;
-    padding: 20px;
+    padding: 16px;
+    border: 1px solid rgba(0,255,136,0.06);
+    border-radius: 2px;
+    background: rgba(0,255,136,0.01);
     margin: 16px 0;
 }}
-.chart-container {{ width: 100%; height: 300px; }}
+.chart-container {{ width: 100%; height: 280px; }}
+.chart-caption {{
+    font-size: 11px;
+    color: rgba(200,255,200,0.35);
+    margin-bottom: 12px;
+    letter-spacing: 0.05em;
+}}
 
+/* ===== 趋势条 ===== */
 .trend-item {{
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 10px 16px;
-    margin: 4px 0;
-    border-radius: 10px;
-    font-size: 13px;
-    background: rgba(255,255,255,0.02);
+    padding: 8px 0;
+    font-size: 12px;
 }}
-.trend-date {{ color: rgba(255,255,255,0.5); width: 100px; font-size: 12px; }}
-.trend-bar {{ flex: 1; height: 24px; background: rgba(255,255,255,0.04); border-radius: 6px; overflow: hidden; }}
-.trend-fill {{ height: 100%; background: linear-gradient(90deg, #60a5fa, #a78bfa); border-radius: 6px; transition: width 1s ease; }}
-.trend-value {{ color: rgba(255,255,255,0.4); width: 60px; text-align: right; font-size: 12px; }}
+.trend-date {{ color: rgba(200,255,200,0.45); width: 80px; font-size: 11px; flex-shrink: 0; }}
+.trend-bar {{ flex: 1; height: 16px; background: rgba(0,255,136,0.03); border-radius: 1px; overflow: hidden; }}
+.trend-fill {{ height: 100%; border-radius: 1px; transition: width 1s cubic-bezier(0.16, 1, 0.3, 1); }}
+.trend-value {{ color: rgba(200,255,200,0.4); width: 50px; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; flex-shrink: 0; }}
 
+/* ===== AI 报告 ===== */
 .ai-section {{
-    background: rgba(255,255,255,0.03);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 14px;
     padding: 20px;
-    margin: 16px 0;
+    border: 1px solid rgba(0,255,136,0.06);
+    border-radius: 2px;
+    background: rgba(0,255,136,0.01);
     line-height: 1.8;
-    font-size: 14px;
-    color: rgba(255,255,255,0.75);
+    font-size: 13px;
+    color: rgba(200,255,200,0.65);
 }}
 
-.footer {{ text-align: center; padding: 40px 0 20px; color: rgba(255,255,255,0.15); font-size: 12px; }}
+/* ===== 页脚 ===== */
+.footer {{
+    text-align: center;
+    padding: 48px 0 24px;
+    color: rgba(200,255,200,0.12);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    border-top: 1px solid rgba(0,255,136,0.04);
+    margin-top: 48px;
+}}
 
+/* ===== 响应式 ===== */
 @media (max-width: 640px) {{
-    .container {{ padding: 24px 16px 60px; }}
-    .overview-grid {{ grid-template-columns: 1fr; }}
-    .overview-card .value {{ font-size: 22px; }}
+    .wrap {{ padding: 0 16px; }}
+    .header {{ padding: 32px 0 24px; }}
+    .header-title {{ font-size: 20px; }}
+    .stats-row {{ grid-template-columns: 1fr; }}
+    .stat-item {{ padding: 12px 8px; border-right: none; border-bottom: 1px solid rgba(0,255,136,0.04); }}
+    .stat-item:last-child {{ border-bottom: none; }}
+    .chart-container {{ height: 240px; }}
+    .trend-date {{ width: 60px; font-size: 10px; }}
+}}
+
+@media (prefers-reduced-motion: reduce) {{
+    .trend-fill {{ transition: none; }}
 }}
 </style>
 </head>
 <body>
-<div class="container">
+<div class="wrap">
+
+    <!-- ===== 头部 ===== -->
     <div class="header">
-        <h1>📊 周报 {start_date} ~ {end_date}</h1>
-        <p class="subtitle">AI Recorder · 自动生成</p>
+        <div class="header-period">{start_date.strftime('%Y.%m.%d')} ~ {end_date.strftime('%Y.%m.%d')}</div>
+        <div class="header-title">周报</div>
+        <div class="header-brand">AI RECORDER</div>
     </div>
 
-    <div class="overview-grid">
-        <div class="overview-card">
+    <!-- ===== 统计行 ===== -->
+    <div class="stats-row">
+        <div class="stat-item">
             <div class="label">总时长</div>
-            <div class="value">{report_data.get('total_hours', 0)}h</div>
+            <div class="value">{total_hours_val}h</div>
         </div>
-        <div class="overview-card">
+        <div class="stat-item">
             <div class="label">日均</div>
-            <div class="value">{report_data.get('avg_daily_seconds', 0)//60}m</div>
+            <div class="value">{avg_mins_val}m</div>
         </div>
-        <div class="overview-card">
+        <div class="stat-item">
             <div class="label">记录数</div>
             <div class="value">{report_data.get('total_records', 0)}</div>
         </div>
     </div>
 
+    <!-- ===== 1. 每日趋势 ===== -->
     <div class="section">
         <div class="section-header">
-            <div class="section-icon">📅</div>
-            <div class="section-title">每日趋势</div>
+            <span class="section-num">01</span>
+            <span class="section-title">每日趋势</span>
         </div>
         {''.join(f'''
         <div class="trend-item">
             <span class="trend-date">{d}</span>
-            <div class="trend-bar"><div class="trend-fill" style="width:{max(h/8*100, 1)}%"></div></div>
+            <div class="trend-bar"><div class="trend-fill" style="width:{max(h/max_hours*100, 1):.0f}%;background:#00ff88;"></div></div>
             <span class="trend-value">{h}h</span>
         </div>''' for d, h in zip(trend_dates, trend_hours))}
     </div>
 
+    <!-- ===== 2. 分类占比 ===== -->
     <div class="section">
         <div class="section-header">
-            <div class="section-icon">📊</div>
-            <div class="section-title">分类占比</div>
+            <span class="section-num">02</span>
+            <span class="section-title">分类占比</span>
         </div>
         <div class="chart-card">
+            <div class="chart-caption">时间分布</div>
             <div id="chart-weekly-pie" class="chart-container"></div>
         </div>
     </div>
 
+    <!-- ===== 3. 每日工作时长 ===== -->
     <div class="section">
         <div class="section-header">
-            <div class="section-icon">📈</div>
-            <div class="section-title">每日工作时长趋势</div>
+            <span class="section-num">03</span>
+            <span class="section-title">每日工作时长</span>
         </div>
         <div class="chart-card">
+            <div class="chart-caption">小时趋势</div>
             <div id="chart-weekly-trend" class="chart-container"></div>
         </div>
     </div>
 
-    {f'<div class="section"><div class="section-header"><div class="section-icon">🤖</div><div class="section-title">AI 分析</div></div><div class="ai-section">{ai_report}</div></div>' if ai_report else ''}
+    <!-- ===== 4. AI 分析 ===== -->
+    {f'''
+    <div class="section">
+        <div class="section-header">
+            <span class="section-num">04</span>
+            <span class="section-title">AI 分析</span>
+        </div>
+        <div class="ai-section">{ai_report}</div>
+    </div>''' if ai_report else ''}
 
-    <div class="footer">AI Recorder · 你的智能工作伙伴</div>
+    <div class="footer">AI RECORDER</div>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
@@ -473,38 +613,37 @@ body {{
 var chartData = {chart_json};
 
 // 饼图
-var pieChart = echarts.init(document.getElementById('chart-weekly-pie'));
+var pieChart = echarts.init(document.getElementById('chart-weekly-pie'), null, {{ renderer: 'canvas' }});
 pieChart.setOption({{
     tooltip: {{ trigger: 'item', formatter: '{{b}}: {{c}}分钟 ({{d}}%)' }},
     series: [{{
         type: 'pie',
-        radius: ['40%', '70%'],
+        radius: ['35%', '65%'],
         center: ['50%', '55%'],
-        itemStyle: {{ borderRadius: 6, borderColor: '#000', borderWidth: 2 }},
-        label: {{ show: true, position: 'outside', formatter: '{{b}}\\n{{d}}%', color: 'rgba(255,255,255,0.6)', fontSize: 11 }},
-        labelLine: {{ lineStyle: {{ color: 'rgba(255,255,255,0.2)' }} }},
+        itemStyle: {{ borderRadius: 2, borderColor: '#0a0e0a', borderWidth: 2 }},
+        label: {{ show: true, position: 'outside', formatter: '{{b}}\\n{{d}}%', color: 'rgba(200,255,200,0.5)', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }},
+        labelLine: {{ lineStyle: {{ color: 'rgba(200,255,200,0.15)' }} }},
         data: chartData.pie_data
     }}]
 }});
 
 // 趋势折线图
-var trendChart = echarts.init(document.getElementById('chart-weekly-trend'));
+var trendChart = echarts.init(document.getElementById('chart-weekly-trend'), null, {{ renderer: 'canvas' }});
 trendChart.setOption({{
     tooltip: {{ trigger: 'axis' }},
     grid: {{ left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true }},
     xAxis: {{
         type: 'category',
         data: chartData.trend_dates,
-        axisLabel: {{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }},
-        axisLine: {{ lineStyle: {{ color: 'rgba(255,255,255,0.1)' }} }},
+        axisLabel: {{ color: 'rgba(200,255,200,0.3)', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }},
+        axisLine: {{ lineStyle: {{ color: 'rgba(0,255,136,0.08)' }} }},
         axisTick: {{ show: false }}
     }},
     yAxis: {{
         type: 'value',
-        name: '小时',
-        nameTextStyle: {{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }},
-        axisLabel: {{ color: 'rgba(255,255,255,0.4)' }},
-        splitLine: {{ lineStyle: {{ color: 'rgba(255,255,255,0.05)' }} }},
+        name: '',
+        axisLabel: {{ color: 'rgba(200,255,200,0.3)', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }},
+        splitLine: {{ lineStyle: {{ color: 'rgba(0,255,136,0.04)' }} }},
         axisLine: {{ show: false }},
         axisTick: {{ show: false }}
     }},
@@ -514,13 +653,13 @@ trendChart.setOption({{
         data: chartData.trend_hours,
         smooth: true,
         symbol: 'circle',
-        symbolSize: 8,
-        lineStyle: {{ color: '#60a5fa', width: 2 }},
-        itemStyle: {{ color: '#60a5fa' }},
+        symbolSize: 6,
+        lineStyle: {{ color: '#00ff88', width: 2 }},
+        itemStyle: {{ color: '#00ff88' }},
         areaStyle: {{
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                {{ offset: 0, color: 'rgba(96,165,250,0.3)' }},
-                {{ offset: 1, color: 'rgba(96,165,250,0.02)' }}
+                {{ offset: 0, color: 'rgba(0,255,136,0.15)' }},
+                {{ offset: 1, color: 'rgba(0,255,136,0.01)' }}
             ])
         }}
     }}]
@@ -538,16 +677,3 @@ window.addEventListener('resize', function() {{
         f.write(html)
 
     return filepath
-
-
-def _get_category_color(category: str) -> str:
-    colors = {
-        "development": "#3b82f6",
-        "browser": "#f97316",
-        "communication": "#eab308",
-        "design": "#a855f7",
-        "office": "#64748b",
-        "terminal": "#22c55e",
-        "other": "#6b7280",
-    }
-    return colors.get(category, "#6b7280")

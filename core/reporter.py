@@ -44,6 +44,11 @@ def _clean_app_name_for_ai(raw: str) -> str:
         "powershell": "PowerShell",
         "cmd": "CMD",
         "tslgame": "PUBG",
+        "fsound": "FSound",
+        "oopz": "Oopz",
+        "lenovomgr": "联想电脑管家",
+        "guaiGu": "古怪加速器",
+        "tonghuashun": "同花顺",
     }
     return fallback.get(name, name.replace("_", " ").title())
 
@@ -163,6 +168,11 @@ def _get_icon(category: str) -> str:
         "design": "🟪",
         "office": "📄",
         "terminal": "⬛",
+        "gaming": "🎮",
+        "finance": "📈",
+        "network": "🌐",
+        "system": "⚙️",
+        "audio": "🎵",
         "other": "⬜",
     }
     return icons.get(category, "⬜")
@@ -176,6 +186,11 @@ def _get_category_name(category: str) -> str:
         "design": "设计",
         "office": "办公",
         "terminal": "终端",
+        "gaming": "游戏",
+        "finance": "金融",
+        "network": "网络",
+        "system": "系统工具",
+        "audio": "音频",
         "other": "其他",
     }
     return names.get(category, category)

@@ -22,6 +22,11 @@ CATEGORY_NAMES = {
     "design": "设计",
     "office": "办公",
     "terminal": "终端",
+    "gaming": "游戏",
+    "finance": "金融",
+    "network": "网络",
+    "system": "系统工具",
+    "audio": "音频",
     "other": "其他",
 }
 
@@ -32,6 +37,11 @@ CATEGORY_ICONS = {
     "design": "🟪",
     "office": "📄",
     "terminal": "⬛",
+    "gaming": "🎮",
+    "finance": "📈",
+    "network": "🌐",
+    "system": "⚙️",
+    "audio": "🎵",
     "other": "⬜",
 }
 
@@ -351,13 +361,12 @@ def analyze_day(target_date: date, settings: Optional[dict] = None) -> Dict[str,
     # 构建合并后的时间线（粗粒度）
     blocks = build_coalesced_timeline(records)
 
-    # 按分类汇总
+    # 按分类汇总（使用数据库原始总秒数作为基准）
     summary = get_daily_summary(target_date)
     category_stats = []
-    total_seconds = 0
+    total_seconds = sum(item["total_seconds"] for item in summary)
     for item in summary:
         secs = item["total_seconds"]
-        total_seconds += secs
         category_stats.append({
             "category": item["category"],
             "name": CATEGORY_NAMES.get(item["category"], item["category"]),

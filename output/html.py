@@ -1,4 +1,6 @@
-"""HTML 仪表盘输出 — WebGL 流光背景 + 侧边栏导航 + ECharts 图表。"""
+"""HTML 仪表盘输出 — 磷光终端风（Phosphor Terminal）。
+基于 finesse-ui 方法论重构：移除 AI 廉价感模式，采用单一灵魂人格。
+"""
 
 import os
 import json
@@ -28,7 +30,7 @@ def _clean_ai_report(raw: str) -> str:
             section_text = stripped[4:]
             section_titles = ["📋 今日工作清单", "🖥️ 应用使用", "🔍 效率洞察", "💡 效率建议", "📈 一句话总结"]
             if section_text in section_titles:
-                cleaned.append(f"<h4 style='color:rgba(255,255,255,0.7);margin:16px 0 8px;font-size:14px;'>{section_text}</h4>")
+                cleaned.append(f"<h4 style='color:rgba(200,255,220,0.6);margin:16px 0 8px;font-size:13px;font-family:'JetBrains Mono',monospace;'>{section_text}</h4>")
                 continue
             else:
                 continue
@@ -83,8 +85,30 @@ def _clean_ai_report(raw: str) -> str:
     return "\n".join(cleaned)
 
 
+def _get_phosphor_palette(category: str) -> tuple:
+    """磷光终端风格配色：暗底 + 单色荧光绿 + 分类微色调。"""
+    # 主色调：荧光绿（终端风格）
+    primary = "#00ff88"
+    # 分类微调色相偏移（保持整体统一，仅微调）
+    hue_shifts = {
+        "development": "#00ff88",
+        "browser": "#f0c040",
+        "communication": "#50b0ff",
+        "design": "#c070ff",
+        "office": "#a0a0a0",
+        "terminal": "#00ff88",
+        "gaming": "#ff5050",
+        "finance": "#40d0a0",
+        "network": "#40c0e0",
+        "system": "#8080ff",
+        "audio": "#ff70b0",
+        "other": "#606060",
+    }
+    return hue_shifts.get(category, primary), primary
+
+
 def save_html_report(report_data: dict, target_date: Optional[date] = None) -> Optional[str]:
-    """生成交互式 HTML 仪表盘。"""
+    """生成交互式 HTML 仪表盘 — 磷光终端风。"""
     if target_date is None:
         target_date = date.fromisoformat(report_data.get("date", date.today().isoformat()))
 
@@ -97,12 +121,12 @@ def save_html_report(report_data: dict, target_date: Optional[date] = None) -> O
     success = report_data.get("success", False)
 
     eff = analysis.get("efficiency", 0)
-    eff_color = "#4ade80" if eff >= 70 else "#fbbf24" if eff >= 40 else "#f87171"
+    eff_color = "#00ff88" if eff >= 70 else "#f0c040" if eff >= 40 else "#ff5050"
     categories_html = _build_categories_html(analysis.get("category_stats", []))
     timeline_html = _build_timeline_html(analysis.get("timeline", []))
     holes_html = _build_holes_html(analysis.get("holes", []))
 
-    # 构建专注时段 HTML（必须在模板之前）
+    # 构建专注时段 HTML
     focus_sessions = analysis.get("focus_sessions", [])
     focus_html = ''
     if focus_sessions:
@@ -114,64 +138,57 @@ def save_html_report(report_data: dict, target_date: Optional[date] = None) -> O
         <div class="focus-item">
             <span class="fi-time">{fs['start']} - {fs['end']}</span>
             <span class="fi-app">{apps_str}</span>
-            <span class="fi-dur">{fs['duration']//60}分钟</span>
+            <span class="fi-dur">{fs['duration']//60}m</span>
         </div>'''
         focus_html += '</div>'
 
     # 准备 ECharts 数据
-    # 时间分布饼图数据
     pie_data = []
     for cat in analysis.get("category_stats", []):
+        color, _ = _get_phosphor_palette(cat["category"])
         pie_data.append({
             "name": cat["name"],
             "value": cat["seconds"] // 60,
-            "itemStyle": {"color": _get_category_color(cat["category"])}
+            "itemStyle": {"color": color}
         })
 
-    # 每小时活跃度柱状图数据
     hourly_labels = []
     hourly_values = []
     hourly_colors = []
     hourly_bg_colors = []
-    hourly_colors_full = []
     for h in range(24):
         hh = f"{h:02d}"
         if hh in analysis.get("hourly_distribution", {}):
             hourly_labels.append(f"{h:02d}:00")
             total_mins = analysis["hourly_distribution"][hh]["total_seconds"] // 60
             hourly_values.append(total_mins)
-            # 根据活跃度着色
             if total_mins >= 60:
-                hourly_colors_full.append("#4ade80")  # 绿色
-                hourly_bg_colors.append("#4ade8044")
+                hourly_colors.append("#00ff88")
+                hourly_bg_colors.append("#00ff8822")
             elif total_mins >= 30:
-                hourly_colors_full.append("#fbbf24")  # 黄色
-                hourly_bg_colors.append("#fbbf2444")
+                hourly_colors.append("#f0c040")
+                hourly_bg_colors.append("#f0c04022")
             else:
-                hourly_colors_full.append("#60a5fa")  # 蓝色
-                hourly_bg_colors.append("#60a5fa44")
+                hourly_colors.append("#50b0ff")
+                hourly_bg_colors.append("#50b0ff22")
         else:
             hourly_labels.append(f"{h:02d}:00")
             hourly_values.append(0)
-            hourly_colors_full.append("#334155")
-            hourly_bg_colors.append("#33415544")
+            hourly_colors.append("#1a2a22")
+            hourly_bg_colors.append("#1a2a22")
 
-    # 峰值时段高亮
     peak_hours = analysis.get("peak_hours", [])
     peak_labels = [f"{p['hour']}:00" for p in peak_hours]
 
-    # 专注时段数据
-    focus_sessions = analysis.get("focus_sessions", [])
     focus_labels = [f"{fs['start']}-{fs['end']}" for fs in focus_sessions]
     focus_durations = [fs["duration"] // 60 for fs in focus_sessions]
     focus_apps = [", ".join(fs.get("app_names", [])) for fs in focus_sessions]
 
-    # ECharts 配置 JSON
     chart_config = {
         "pie_data": pie_data,
         "hourly_labels": hourly_labels,
         "hourly_values": hourly_values,
-        "hourly_colors": hourly_colors_full,
+        "hourly_colors": hourly_colors,
         "hourly_bg_colors": hourly_bg_colors,
         "peak_labels": peak_labels,
         "focus_labels": focus_labels,
@@ -181,253 +198,222 @@ def save_html_report(report_data: dict, target_date: Optional[date] = None) -> O
     }
     chart_json = json.dumps(chart_config, ensure_ascii=False)
 
+    # 效率等级标签
+    if eff >= 80:
+        eff_label = "高效"
+    elif eff >= 60:
+        eff_label = "良好"
+    elif eff >= 40:
+        eff_label = "一般"
+    elif eff >= 20:
+        eff_label = "偏低"
+    else:
+        eff_label = "低效"
+
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📊 {target_date} 工作日报 — AI Recorder</title>
+<title>{target_date} 日报</title>
 <style>
+/* ===== 基础重置 ===== */
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-html {{ scroll-behavior: smooth; }}
+html {{ scroll-behavior:smooth; }}
+
+/* ===== 字体栈：JetBrains Mono（终端） + 系统无衬线 ===== */
 body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    background: #000;
-    color: #e5e5e5;
-    overflow-x: hidden;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: #0a0e0a;
+    color: #c8ffc8;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }}
 
-/* ===== WebGL 背景 ===== */
-#wgsl-bg {{
+/* ===== Grain 噪点层（固定定位，不跟随滚动） ===== */
+body::before {{
+    content: '';
     position: fixed;
-    top: 0; left: 0;
-    width: 100vw; height: 100vh;
-    z-index: 0;
-}}
-#wgsl-bg canvas {{
-    width: 100%; height: 100%;
-    display: block;
+    inset: 0;
+    z-index: 100;
+    pointer-events: none;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 256px 256px;
 }}
 
-/* ===== 遮罩层 ===== */
-.page-overlay {{
+/* ===== 暗角（vignette） ===== */
+body::after {{
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 30%, transparent 50%, rgba(0,0,0,0.4) 100%);
+}}
+
+/* ===== 全局容器 ===== */
+.wrap {{
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 24px;
     position: relative;
     z-index: 1;
-    background: radial-gradient(ellipse at 50% 0%, rgba(10,5,30,0.3) 0%, rgba(0,0,0,0.8) 60%);
-    min-height: 100vh;
-}}
-
-/* ===== 侧边栏导航 ===== */
-.sidebar {{
-    width: 200px;
-    position: fixed;
-    top: 0; left: 0;
-    height: 100vh;
-    background: rgba(0,0,0,0.5);
-    backdrop-filter: blur(20px);
-    border-right: 1px solid rgba(255,255,255,0.06);
-    padding: 24px 0;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-}}
-.sidebar-brand {{
-    font-size: 14px;
-    font-weight: 700;
-    color: rgba(255,255,255,0.5);
-    padding: 0 20px;
-    margin-bottom: 24px;
-    letter-spacing: 1px;
-}}
-.sidebar-nav {{
-    flex: 1;
-}}
-.sidebar-nav a {{
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 20px;
-    color: rgba(255,255,255,0.4);
-    text-decoration: none;
-    font-size: 13px;
-    transition: all 0.2s;
-    border-left: 2px solid transparent;
-}}
-.sidebar-nav a:hover,
-.sidebar-nav a.active {{
-    color: rgba(255,255,255,0.9);
-    background: rgba(255,255,255,0.04);
-    border-left-color: #60a5fa;
-}}
-.sidebar-nav a .nav-icon {{
-    width: 20px;
-    text-align: center;
-    font-size: 14px;
-}}
-.sidebar-footer {{
-    padding: 16px 20px;
-    font-size: 11px;
-    color: rgba(255,255,255,0.15);
-    border-top: 1px solid rgba(255,255,255,0.04);
-}}
-
-/* ===== 主内容区 ===== */
-.main-content {{
-    margin-left: 200px;
-    width: calc(100% - 200px);
-    min-height: 100vh;
-}}
-.container {{
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 40px 32px 80px;
 }}
 
 /* ===== 头部 ===== */
-.header {{ margin-bottom: 32px; }}
-.header h1 {{
-    font-size: 34px;
-    font-weight: 800;
-    letter-spacing: -0.5px;
-    background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 40%, #f472b6 80%, #fb923c 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    background-size: 200% 200%;
-    animation: gradientShift 6s ease infinite;
+.header {{
+    padding: 48px 0 32px;
+    border-bottom: 1px solid rgba(0,255,136,0.08);
+    margin-bottom: 32px;
 }}
-@keyframes gradientShift {{
-    0%, 100% {{ background-position: 0% 50%; }}
-    50% {{ background-position: 100% 50%; }}
-}}
-.header .subtitle {{
-    color: rgba(255,255,255,0.3);
-    font-size: 13px;
-    margin-top: 6px;
-    letter-spacing: 1px;
+.header-date {{
+    font-size: 11px;
+    color: rgba(0,255,136,0.3);
+    letter-spacing: 0.15em;
     text-transform: uppercase;
+    margin-bottom: 8px;
+}}
+.header-title {{
+    font-size: 28px;
+    font-weight: 700;
+    color: #e0ffe0;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+}}
+.header-brand {{
+    font-size: 11px;
+    color: rgba(0,255,136,0.2);
+    margin-top: 8px;
+    letter-spacing: 0.1em;
 }}
 
 /* ===== 效率评分 ===== */
-.score-card {{
+.score-row {{
     display: flex;
-    align-items: center;
-    gap: 16px;
-    background: rgba(255,255,255,0.04);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 20px;
-    padding: 24px 32px;
-    margin: 24px 0 32px;
+    align-items: baseline;
+    gap: 20px;
+    margin: 28px 0 36px;
+    padding: 20px 24px;
+    background: rgba(0,255,136,0.02);
+    border: 1px solid rgba(0,255,136,0.06);
+    border-radius: 2px;
     width: fit-content;
 }}
 .score-num {{
-    font-size: 56px;
-    font-weight: 900;
+    font-size: 52px;
+    font-weight: 700;
     color: {eff_color};
     line-height: 1;
     font-variant-numeric: tabular-nums;
-    text-shadow: 0 0 30px {eff_color}44;
 }}
 .score-meta {{ flex: 1; }}
-.score-label {{ font-size: 13px; color: rgba(255,255,255,0.4); margin-bottom: 8px; }}
+.score-label {{
+    font-size: 11px;
+    color: rgba(200,255,200,0.4);
+    margin-bottom: 6px;
+    letter-spacing: 0.08em;
+}}
+.score-tag {{
+    font-size: 13px;
+    color: {eff_color};
+    font-weight: 600;
+}}
 .score-bar-track {{
-    width: 160px; height: 6px;
-    background: rgba(255,255,255,0.08);
-    border-radius: 3px;
+    width: 140px;
+    height: 3px;
+    background: rgba(0,255,136,0.08);
+    border-radius: 1px;
     overflow: hidden;
+    margin-top: 8px;
 }}
 .score-bar-fill {{
     height: 100%;
     width: {eff}%;
     background: {eff_color};
-    border-radius: 3px;
-    box-shadow: 0 0 10px {eff_color}88;
-    transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+    border-radius: 1px;
+    transition: width 1.5s cubic-bezier(0.16, 1, 0.3, 1);
 }}
 
-/* ===== 统计网格 ===== */
-.stats-grid {{
+/* ===== 统计行（非卡片，用分隔线） ===== */
+.stats-row {{
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    margin-bottom: 36px;
+    gap: 0;
+    margin-bottom: 40px;
+    border-top: 1px solid rgba(0,255,136,0.08);
+    border-bottom: 1px solid rgba(0,255,136,0.08);
 }}
-.stat-card {{
-    background: rgba(255,255,255,0.03);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 14px;
-    padding: 18px 16px;
+.stat-item {{
+    padding: 16px 12px;
     text-align: center;
-    transition: all 0.3s ease;
+    border-right: 1px solid rgba(0,255,136,0.04);
 }}
-.stat-card:hover {{
-    background: rgba(255,255,255,0.06);
-    border-color: rgba(255,255,255,0.12);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 32px rgba(96,165,250,0.1);
-}}
-.stat-card .label {{
-    font-size: 11px;
-    color: rgba(255,255,255,0.35);
+.stat-item:last-child {{ border-right: none; }}
+.stat-item .label {{
+    font-size: 10px;
+    color: rgba(200,255,200,0.3);
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    letter-spacing: 0.8px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }}
-.stat-card .value {{
-    font-size: 24px;
-    font-weight: 700;
-    color: #f0f0f0;
+.stat-item .value {{
+    font-size: 20px;
+    font-weight: 600;
+    color: #d0ffd0;
     font-variant-numeric: tabular-nums;
 }}
 
 /* ===== 分区 ===== */
-.section {{ margin: 32px 0; scroll-margin-top: 20px; }}
+.section {{ margin: 36px 0; scroll-margin-top: 20px; }}
 .section-header {{
     display: flex;
     align-items: center;
     gap: 10px;
     margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(0,255,136,0.06);
 }}
-.section-icon {{
-    width: 28px; height: 28px;
-    background: linear-gradient(135deg, rgba(96,165,250,0.2), rgba(167,139,250,0.2));
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
+.section-num {{
+    font-size: 10px;
+    color: rgba(0,255,136,0.25);
+    font-variant-numeric: tabular-nums;
+    min-width: 20px;
 }}
 .section-title {{
-    font-size: 17px;
+    font-size: 14px;
     font-weight: 600;
-    color: rgba(255,255,255,0.8);
+    color: rgba(200,255,200,0.7);
+    letter-spacing: 0.05em;
 }}
 
 /* ===== 图表容器 ===== */
-.chart-card {{
-    background: rgba(255,255,255,0.03);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 16px;
-    padding: 20px;
-    margin: 16px 0;
-}}
-.chart-container {{
-    width: 100%;
-    height: 300px;
-}}
 .chart-row {{
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 16px;
+    margin: 16px 0;
 }}
-.chart-row .chart-container {{
+.chart-card {{
+    padding: 16px;
+    border: 1px solid rgba(0,255,136,0.06);
+    border-radius: 2px;
+    background: rgba(0,255,136,0.01);
+}}
+.chart-container {{
+    width: 100%;
     height: 280px;
 }}
+.chart-caption {{
+    font-size: 11px;
+    color: rgba(200,255,200,0.35);
+    margin-bottom: 12px;
+    letter-spacing: 0.05em;
+}}
 
-/* ===== 时间分布 ===== */
+/* ===== 时间分布条 ===== */
 .cat-bar {{
     display: flex;
     align-items: center;
@@ -436,71 +422,57 @@ body {{
 }}
 .cat-name {{
     width: 70px;
-    font-size: 13px;
-    color: rgba(255,255,255,0.6);
+    font-size: 12px;
+    color: rgba(200,255,200,0.55);
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-shrink: 0;
 }}
 .cat-dot {{
-    width: 8px; height: 8px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     display: inline-block;
 }}
 .bar-track {{
     flex: 1;
-    height: 28px;
-    background: rgba(255,255,255,0.04);
-    border-radius: 8px;
+    height: 20px;
+    background: rgba(0,255,136,0.03);
+    border-radius: 1px;
     overflow: hidden;
-    position: relative;
 }}
 .bar-fill {{
     height: 100%;
-    border-radius: 8px;
-    transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
-    position: relative;
-}}
-.bar-fill::after {{
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%);
-    animation: barShimmer 2.5s ease-in-out infinite;
-}}
-@keyframes barShimmer {{
-    0%, 100% {{ transform: translateX(-100%); }}
-    50% {{ transform: translateX(100%); }}
+    border-radius: 1px;
+    transition: width 1.5s cubic-bezier(0.16, 1, 0.3, 1);
 }}
 .cat-val {{
-    width: 100px;
-    font-size: 13px;
-    color: rgba(255,255,255,0.45);
+    width: 90px;
+    font-size: 12px;
+    color: rgba(200,255,200,0.4);
     text-align: right;
     font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
 }}
 
-/* ===== 时间线卡片 ===== */
+/* ===== 时间线 ===== */
 .tl-card {{
     display: flex;
     align-items: stretch;
     gap: 14px;
-    padding: 16px 20px;
-    margin: 8px 0;
-    border-radius: 16px;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
-    transition: all 0.25s ease;
-    font-size: 13px;
+    padding: 14px 16px;
+    margin: 6px 0;
+    border-left: 2px solid rgba(0,255,136,0.12);
+    font-size: 12px;
+    transition: background 0.2s;
 }}
 .tl-card:hover {{
-    background: rgba(255,255,255,0.06);
-    border-color: rgba(255,255,255,0.12);
-    transform: translateX(4px);
+    background: rgba(0,255,136,0.02);
 }}
 .tl-card-time {{
-    color: rgba(255,255,255,0.3);
-    font-size: 12px;
+    color: rgba(200,255,200,0.3);
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
     padding-top: 2px;
     width: 40px;
@@ -508,619 +480,277 @@ body {{
     text-align: right;
 }}
 .tl-card-dot {{
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     margin-top: 6px;
     flex-shrink: 0;
-    box-shadow: 0 0 8px currentColor;
 }}
-.tl-card-body {{
-    flex: 1;
-    min-width: 0;
-}}
+.tl-card-body {{ flex: 1; min-width: 0; }}
 .tl-card-top {{
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }}
-.tl-card-info {{
-    flex: 1;
-    min-width: 0;
-}}
+.tl-card-info {{ flex: 1; min-width: 0; }}
 .tl-card-name {{
     font-weight: 600;
-    color: rgba(255,255,255,0.85);
-    font-size: 14px;
+    color: rgba(200,255,200,0.8);
+    font-size: 13px;
     margin-bottom: 2px;
 }}
 .tl-card-cat {{
-    font-size: 12px;
-    color: rgba(255,255,255,0.35);
+    font-size: 11px;
+    color: rgba(200,255,200,0.3);
 }}
 .tl-card-sub {{
-    font-size: 12px;
-    color: rgba(255,255,255,0.4);
-    margin-top: 6px;
-    padding-left: 52px;
+    font-size: 11px;
+    color: rgba(200,255,200,0.35);
+    margin-top: 4px;
+    padding-left: 46px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }}
 .tl-card-duration {{
-    color: rgba(255,255,255,0.3);
-    font-size: 13px;
+    color: rgba(200,255,200,0.3);
+    font-size: 12px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     padding-top: 2px;
     flex-shrink: 0;
 }}
 
-/* ===== 专注时段列表 ===== */
+/* ===== 专注时段 ===== */
 .focus-list {{
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     margin: 12px 0;
 }}
 .focus-item {{
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 10px 16px;
-    background: rgba(74, 222, 128, 0.06);
-    border: 1px solid rgba(74, 222, 128, 0.12);
-    border-radius: 10px;
-    font-size: 13px;
+    padding: 10px 14px;
+    border: 1px solid rgba(0,255,136,0.08);
+    border-radius: 2px;
+    font-size: 12px;
 }}
 .focus-item .fi-time {{
-    color: rgba(255,255,255,0.5);
-    font-size: 12px;
+    color: rgba(200,255,200,0.45);
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
     width: 80px;
     flex-shrink: 0;
 }}
 .focus-item .fi-app {{
     flex: 1;
-    color: rgba(255,255,255,0.8);
+    color: rgba(200,255,200,0.75);
     font-weight: 500;
 }}
 .focus-item .fi-dur {{
-    color: #4ade80;
+    color: #00ff88;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 12px;
     flex-shrink: 0;
 }}
 
 /* ===== 时间黑洞 ===== */
 .hole-card {{
-    background: rgba(255,255,255,0.03);
-    border-radius: 12px;
-    padding: 14px 16px;
+    padding: 12px 14px;
     margin: 8px 0;
-    border-left: 3px solid #555;
+    border-left: 2px solid rgba(0,255,136,0.15);
+    border-radius: 0 2px 2px 0;
+    background: rgba(0,255,136,0.01);
     transition: background 0.2s;
 }}
-.hole-card:hover {{ background: rgba(255,255,255,0.05); }}
-.hole-card.warning {{ border-left-color: #f87171; }}
-.hole-card.info {{ border-left-color: #60a5fa; }}
-.hole-card strong {{ font-size: 14px; color: #f0f0f0; }}
-.hole-card p {{ margin: 4px 0; font-size: 13px; color: rgba(255,255,255,0.55); }}
-.hole-card em {{ font-size: 12px; color: rgba(255,255,255,0.35); }}
+.hole-card:hover {{ background: rgba(0,255,136,0.03); }}
+.hole-card.warning {{ border-left-color: #ff5050; }}
+.hole-card.info {{ border-left-color: #50b0ff; }}
+.hole-card strong {{ font-size: 13px; color: #d0ffd0; font-weight: 600; }}
+.hole-card p {{ margin: 4px 0; font-size: 12px; color: rgba(200,255,200,0.5); }}
+.hole-card em {{ font-size: 11px; color: rgba(200,255,200,0.3); font-style: normal; }}
 
 /* ===== AI 报告 ===== */
 .ai-section {{
-    background: rgba(255,255,255,0.03);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 14px;
     padding: 20px;
-    margin: 16px 0;
+    border: 1px solid rgba(0,255,136,0.06);
+    border-radius: 2px;
+    background: rgba(0,255,136,0.01);
     line-height: 1.8;
-    font-size: 14px;
-    color: rgba(255,255,255,0.75);
+    font-size: 13px;
+    color: rgba(200,255,200,0.65);
 }}
 
 /* ===== 空状态 ===== */
 .empty-state {{
     text-align: center;
-    padding: 32px 20px;
-    color: rgba(255,255,255,0.25);
-    font-size: 14px;
+    padding: 24px 16px;
+    color: rgba(200,255,200,0.2);
+    font-size: 12px;
+    letter-spacing: 0.05em;
+}}
+
+/* ===== 折叠提示 ===== */
+.fold-hint {{
+    text-align: center;
+    padding: 6px 0;
+    color: rgba(200,255,200,0.2);
+    font-size: 11px;
 }}
 
 /* ===== 页脚 ===== */
 .footer {{
     text-align: center;
-    padding: 40px 0 20px;
-    color: rgba(255,255,255,0.15);
-    font-size: 12px;
-    letter-spacing: 1px;
+    padding: 48px 0 24px;
+    color: rgba(200,255,200,0.12);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    border-top: 1px solid rgba(0,255,136,0.04);
+    margin-top: 48px;
 }}
 
 /* ===== 响应式 ===== */
 @media (max-width: 768px) {{
-    .sidebar {{ display: none; }}
-    .main-content {{ margin-left: 0; width: 100%; }}
-    .container {{ padding: 24px 16px 60px; }}
-    .header h1 {{ font-size: 24px; }}
-    .score-card {{ padding: 18px 20px; flex-direction: column; align-items: flex-start; }}
-    .score-num {{ font-size: 42px; }}
-    .stats-grid {{ grid-template-columns: repeat(2, 1fr); }}
-    .stat-card .value {{ font-size: 20px; }}
-    .cat-val {{ width: 70px; font-size: 12px; }}
-    .cat-name {{ width: 55px; font-size: 12px; }}
+    .wrap {{ padding: 0 16px; }}
+    .header {{ padding: 32px 0 24px; }}
+    .header-title {{ font-size: 22px; }}
+    .score-row {{ flex-direction: column; align-items: flex-start; gap: 12px; }}
+    .score-num {{ font-size: 40px; }}
+    .stats-row {{ grid-template-columns: repeat(2, 1fr); }}
+    .stat-item {{ padding: 12px 8px; }}
+    .stat-item .value {{ font-size: 18px; }}
     .chart-row {{ grid-template-columns: 1fr; }}
+    .chart-container {{ height: 240px; }}
+    .cat-name {{ width: 50px; font-size: 11px; }}
+    .cat-val {{ width: 60px; font-size: 11px; }}
+    .tl-card {{ padding: 10px 12px; }}
+    .tl-card-sub {{ padding-left: 0; }}
 }}
 
 @media (prefers-reduced-motion: reduce) {{
-    .header h1 {{ animation: none; }}
-    .bar-fill::after {{ animation: none; }}
-    .stat-card {{ transition: none; }}
+    .score-bar-fill {{ transition: none; }}
+    .bar-fill {{ transition: none; }}
+    .tl-card {{ transition: none; }}
+    .hole-card {{ transition: none; }}
 }}
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<!-- WebGL 流光背景 -->
-<div id="wgsl-bg"></div>
-
-<div class="page-overlay">
-
-<!-- ===== 侧边栏导航 ===== -->
-<nav class="sidebar">
-    <div class="sidebar-brand">AI RECORDER</div>
-    <div class="sidebar-nav">
-        <a href="#overview" class="active"><span class="nav-icon">📊</span> 概览</a>
-        <a href="#charts"><span class="nav-icon">📈</span> 图表</a>
-        <a href="#distribution"><span class="nav-icon">⏰</span> 时间分布</a>
-        <a href="#timeline"><span class="nav-icon">🕐</span> 时间线</a>
-        <a href="#focus"><span class="nav-icon">🎯</span> 专注时段</a>
-        <a href="#holes"><span class="nav-icon">🔍</span> 时间黑洞</a>
-        <a href="#ai"><span class="nav-icon">🤖</span> AI 分析</a>
-    </div>
-    <div class="sidebar-footer">{target_date}</div>
-</nav>
-
-<!-- ===== 主内容 ===== -->
-<main class="main-content">
-<div class="container">
-
+    <!-- ===== 头部 ===== -->
     <div class="header" id="overview">
-        <h1>📊 {target_date} 工作日报</h1>
-        <p class="subtitle">AI Recorder · 自动生成</p>
+        <div class="header-date">{target_date.strftime('%A').replace('星期一','Mon').replace('星期二','Tue').replace('星期三','Wed').replace('星期四','Thu').replace('星期五','Fri').replace('星期六','Sat').replace('星期日','Sun')} · {target_date.strftime('%Y.%m.%d')}</div>
+        <div class="header-title">工作日报</div>
+        <div class="header-brand">AI Recorder</div>
     </div>
 
-    <div class="score-card">
+    <!-- ===== 效率评分 ===== -->
+    <div class="score-row">
         <div class="score-num">{eff}</div>
         <div class="score-meta">
             <div class="score-label">效率评分</div>
+            <div class="score-tag">{eff_label}</div>
             <div class="score-bar-track"><div class="score-bar-fill"></div></div>
         </div>
     </div>
 
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="label">最早活动</div>
+    <!-- ===== 统计行 ===== -->
+    <div class="stats-row">
+        <div class="stat-item">
+            <div class="label">最早</div>
             <div class="value">{analysis.get('earliest', '?')}</div>
         </div>
-        <div class="stat-card">
-            <div class="label">最晚活动</div>
+        <div class="stat-item">
+            <div class="label">最晚</div>
             <div class="value">{analysis.get('latest', '?')}</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-item">
             <div class="label">总时长</div>
-            <div class="value">{analysis.get('total_actual_seconds', 0)//60} 分钟</div>
+            <div class="value">{analysis.get('total_actual_seconds', 0)//60}m</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-item">
             <div class="label">记录数</div>
             <div class="value">{analysis.get('record_count', 0)}</div>
         </div>
     </div>
 
-    <!-- ===== 图表区域 ===== -->
+    <!-- ===== 1. 数据可视化 ===== -->
     <div class="section" id="charts">
         <div class="section-header">
-            <div class="section-icon">📈</div>
-            <div class="section-title">数据可视化</div>
+            <span class="section-num">01</span>
+            <span class="section-title">数据可视化</span>
         </div>
         <div class="chart-row">
             <div class="chart-card">
-                <div style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:8px;">🍩 时间分布</div>
+                <div class="chart-caption">时间分布</div>
                 <div id="chart-pie" class="chart-container"></div>
             </div>
             <div class="chart-card">
-                <div style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:8px;">📊 每小时活跃度</div>
+                <div class="chart-caption">每小时活跃度</div>
                 <div id="chart-hourly" class="chart-container"></div>
             </div>
         </div>
     </div>
 
-    <!-- ===== 时间分布 ===== -->
+    <!-- ===== 2. 时间分布 ===== -->
     <div class="section" id="distribution">
         <div class="section-header">
-            <div class="section-icon">⏰</div>
-            <div class="section-title">时间分布</div>
+            <span class="section-num">02</span>
+            <span class="section-title">时间分布</span>
         </div>
         {categories_html if categories_html else '<div class="empty-state">暂无数据</div>'}
     </div>
 
-    <!-- ===== 时间线 ===== -->
+    <!-- ===== 3. 时间线 ===== -->
     <div class="section" id="timeline">
         <div class="section-header">
-            <div class="section-icon">📋</div>
-            <div class="section-title">时间线</div>
+            <span class="section-num">03</span>
+            <span class="section-title">时间线</span>
         </div>
         {timeline_html if timeline_html else '<div class="empty-state">暂无数据</div>'}
     </div>
 
-    <!-- ===== 专注时段 ===== -->
+    <!-- ===== 4. 专注时段 ===== -->
     <div class="section" id="focus">
         <div class="section-header">
-            <div class="section-icon">🎯</div>
-            <div class="section-title">专注时段（≥20分钟）</div>
+            <span class="section-num">04</span>
+            <span class="section-title">专注时段</span>
         </div>
         {focus_html if focus_sessions else '<div class="empty-state">今天没有 >=20 分钟的连续专注时段</div>'}
     </div>
 
-    <!-- ===== 时间黑洞 ===== -->
+    <!-- ===== 5. 时间黑洞 ===== -->
     <div class="section" id="holes">
         <div class="section-header">
-            <div class="section-icon">🔍</div>
-            <div class="section-title">时间黑洞分析</div>
+            <span class="section-num">05</span>
+            <span class="section-title">时间黑洞</span>
         </div>
-        {holes_html if holes_html else '<div class="empty-state">✅ 未发现明显的时间黑洞，今天很专注！</div>'}
+        {holes_html if holes_html else '<div class="empty-state">未发现明显的时间黑洞</div>'}
     </div>
 
-    <!-- ===== AI 分析 ===== -->
+    <!-- ===== 6. AI 分析 ===== -->
     <div class="section" id="ai">
         <div class="section-header">
-            <div class="section-icon">🤖</div>
-            <div class="section-title">AI 分析</div>
+            <span class="section-num">06</span>
+            <span class="section-title">AI 分析</span>
         </div>
         {f'<div class="ai-section">{ai_report}</div>' if ai_report else ''}
     </div>
 
-    <div class="footer">AI Recorder · 你的智能工作伙伴</div>
+    <div class="footer">AI RECORDER</div>
 
-</div>
-</main>
 </div>
 
 <!-- ECharts CDN -->
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 
 <script>
-// ===== 侧边栏导航高亮 =====
-(function() {{
-    var navLinks = document.querySelectorAll('.sidebar-nav a');
-    var sections = document.querySelectorAll('.section, .header');
-
-    function updateActiveNav() {{
-        var scrollPos = window.scrollY + 100;
-        for (var i = sections.length - 1; i >= 0; i--) {{
-            if (sections[i].offsetTop <= scrollPos) {{
-                var id = sections[i].getAttribute('id');
-                navLinks.forEach(function(link) {{
-                    link.classList.remove('active');
-                    if (link.getAttribute('href') === '#' + id) {{
-                        link.classList.add('active');
-                    }}
-                }});
-                break;
-            }}
-        }}
-    }}
-
-    window.addEventListener('scroll', updateActiveNav);
-    updateActiveNav();
-}})();
-
-// ===== WebGL 流光背景 =====
-(function() {{
-    var container = document.getElementById('wgsl-bg');
-    if (!container) return;
-
-    var isLowEnd = false;
-    try {{
-        var mem = navigator.deviceMemory || 4;
-        var cores = navigator.hardwareConcurrency || 4;
-        if (mem <= 2 || cores <= 2) isLowEnd = true;
-    }} catch(e) {{}}
-
-    var colors = [
-        [0.65, 0.78, 1.0],
-        [0.32, 0.15, 1.0],
-        [1.0, 0.63, 0.98],
-    ];
-    var bgColor = [0.04, 0.02, 0.12];
-
-    var canvas = document.createElement('canvas');
-    container.appendChild(canvas);
-    var gl = canvas.getContext('webgl', {{ alpha: true, antialias: !isLowEnd }});
-    if (!gl) {{
-        canvas.style.display = 'none';
-        container.style.background = 'linear-gradient(135deg, #0a0a2e 0%, #1a0a2e 50%, #0a1a2e 100%)';
-        return;
-    }}
-
-    var vertSrc = `
-        attribute vec2 position;
-        attribute vec2 uv;
-        varying vec2 vUv;
-        void main() {{
-            vUv = uv;
-            gl_Position = vec4(position, 0.0, 1.0);
-        }}
-    `;
-
-    var fragSrc = `
-        precision highp float;
-        uniform vec3  iResolution;
-        uniform vec2  iMouse;
-        uniform float iTime;
-        uniform vec3  uColor0;
-        uniform vec3  uColor1;
-        uniform vec3  uColor2;
-        uniform vec3  uBgColor;
-        uniform float uSpeed;
-        uniform int   uStreakCount;
-        uniform float uStreakWidth;
-        uniform float uStreakLength;
-        uniform float uGlow;
-        uniform float uDensity;
-        uniform float uTwinkle;
-        uniform float uZoom;
-        uniform float uBgGlow;
-        uniform float uMouseEnabled;
-        uniform float uMouseStrength;
-        uniform float uMouseRadius;
-        varying vec2 vUv;
-
-        vec3 palette(float h) {{
-            if (h < 0.333) return uColor0;
-            if (h < 0.666) return uColor1;
-            return uColor2;
-        }}
-
-        vec3 tanhv(vec3 x) {{
-            vec3 e = exp(-2.0 * x);
-            return (1.0 - e) / (1.0 + e);
-        }}
-
-        vec2 sceneC(vec2 frag, vec2 r) {{
-            vec2 P = (frag + frag - r) / r.x;
-            float z = 0.0;
-            float d = 1e3;
-            vec4 O = vec4(0.0);
-            for (int k = 0; k < 39; k++) {{
-                if (d <= 1e-4) break;
-                O = z * normalize(vec4(P, uZoom, 0.0)) - vec4(0.0, 4.0, 1.0, 0.0) / 4.5;
-                d = 1.0 - sqrt(length(O * O));
-                z += d;
-            }}
-            return vec2(O.x, atan(O.z, O.y));
-        }}
-
-        void mainImage(out vec4 o, vec2 C) {{
-            vec2 r = iResolution.xy;
-            vec2 uv0 = (C + C - r) / r.x;
-            float T = 0.1 * iTime * uSpeed + 9.0;
-            float angRings = max(1.0, floor(6.28318530718 * max(uDensity, 0.05) + 0.5));
-            vec2 Y = vec2(5e-3, 6.28318530718 / angRings);
-
-            vec2 c0 = sceneC(C, r);
-            vec2 cdx = sceneC(C + vec2(1.0, 0.0), r);
-            vec2 cdy = sceneC(C + vec2(0.0, 1.0), r);
-            vec2 dCx = cdx - c0;
-            vec2 dCy = cdy - c0;
-            dCx.y -= 6.28318530718 * floor(dCx.y / 6.28318530718 + 0.5);
-            dCy.y -= 6.28318530718 * floor(dCy.y / 6.28318530718 + 0.5);
-            vec2 fw = abs(dCx) + abs(dCy);
-            C = c0;
-
-            vec2 P = vec2(2.0, 1.0) * uv0 - (r / r.x) * vec2(0.0, 1.0);
-            vec4 O = vec4(uBgColor * 90.0 * uBgGlow / (1e3 * dot(P, P) + 6.0), 0.0);
-
-            float mGlow = 0.0;
-            if (uMouseEnabled > 0.5) {{
-                vec2 mN = (iMouse + iMouse - r) / r.x;
-                float md = length(uv0 - mN);
-                mGlow = exp(-md * md / max(uMouseRadius * uMouseRadius, 1e-4)) * uMouseStrength;
-                O.rgb += uColor0 * mGlow * 0.25;
-            }}
-
-            float zr = 5e-4 * uStreakWidth;
-            vec2 rr = vec2(max(length(fw), 1e-5));
-            float tail = 19.0 / max(uStreakLength, 0.05);
-
-            for (int m = 0; m < 16; m++) {{
-                if (m >= uStreakCount) break;
-                float jf = float(m) + 1.0;
-                float ic = fract(sin(dot(vec2(jf, floor(C.x / Y.x + 0.5)), vec2(7.0, 11.0)) * 73.0));
-                vec2 Pp = C - (T + T * ic) * vec2(0.0, 1.0);
-                Pp -= floor(Pp / Y + 0.5) * Y;
-                float h = fract(8663.0 * ic);
-                vec3 col = palette(h);
-                float weight = mix(1.5, 1.0 + sin(T + 7.0 * h + 4.0), uTwinkle);
-                weight *= (1.0 + mGlow * 2.0);
-                vec2 inner = vec2(length(max(Pp, vec2(-1.0, 0.0))), length(Pp) - zr) - zr;
-                vec2 sm = vec2(1.0) - smoothstep(-rr, rr, inner);
-                O.rgb += dot(sm, vec2(exp(tail * Pp.y), 3.0)) * col * weight;
-                C.x += Y.x / 8.0;
-            }}
-
-            vec3 colr = sqrt(tanhv(max(O.rgb * uGlow - vec3(0.04, 0.08, 0.02), 0.0)));
-            o = vec4(colr, 1.0);
-        }}
-
-        void main() {{
-            vec4 color;
-            mainImage(color, vUv * iResolution.xy);
-            gl_FragColor = color;
-        }}
-    `;
-
-    function compileShader(src, type) {{
-        var shader = gl.createShader(type);
-        gl.shaderSource(shader, src);
-        gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {{
-            console.warn('Shader compile failed:', gl.getShaderInfoLog(shader));
-            return null;
-        }}
-        return shader;
-    }}
-
-    var vert = compileShader(vertSrc, gl.VERTEX_SHADER);
-    var frag = compileShader(fragSrc, gl.FRAGMENT_SHADER);
-    if (!vert || !frag) {{
-        container.style.background = 'linear-gradient(135deg, #0a0a2e 0%, #1a0a2e 50%, #0a1a2e 100%)';
-        return;
-    }}
-
-    var program = gl.createProgram();
-    gl.attachShader(program, vert);
-    gl.attachShader(program, frag);
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {{
-        console.warn('Program link failed:', gl.getProgramInfoLog(program));
-        container.style.background = 'linear-gradient(135deg, #0a0a2e 0%, #1a0a2e 50%, #0a1a2e 100%)';
-        return;
-    }}
-    gl.useProgram(program);
-
-    var positions = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
-    var uvs = new Float32Array([0,0, 1,0, 0,1, 1,1]);
-    var posBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-    var posLoc = gl.getAttribLocation(program, 'position');
-    gl.enableVertexAttribArray(posLoc);
-    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
-
-    var uvBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
-    var uvLoc = gl.getAttribLocation(program, 'uv');
-    gl.enableVertexAttribArray(uvLoc);
-    gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 0, 0);
-
-    var locs = {{}};
-    var uniformNames = [
-        'iResolution','iMouse','iTime',
-        'uColor0','uColor1','uColor2',
-        'uBgColor','uSpeed','uStreakCount','uStreakWidth',
-        'uStreakLength','uGlow','uDensity','uTwinkle',
-        'uZoom','uBgGlow','uMouseEnabled','uMouseStrength','uMouseRadius'
-    ];
-    for (var i = 0; i < uniformNames.length; i++) {{
-        locs[uniformNames[i]] = gl.getUniformLocation(program, uniformNames[i]);
-    }}
-
-    var params = {{
-        speed: 0.5,
-        streakCount: 2,
-        streakWidth: 1,
-        streakLength: 1,
-        glow: 1,
-        density: 0.6,
-        twinkle: 1,
-        zoom: 3,
-        bgGlow: 0.5,
-        mouseEnabled: 1,
-        mouseStrength: 0.5,
-        mouseRadius: 1,
-        mouseDampening: 0.15,
-    }};
-
-    var mouseTarget = [0, 0];
-    var mouseCurrent = [0, 0];
-    var lastTime = 0;
-
-    canvas.addEventListener('mousemove', function(e) {{
-        var rect = canvas.getBoundingClientRect();
-        var scaleX = canvas.width / rect.width;
-        var scaleY = canvas.height / rect.height;
-        mouseTarget[0] = (e.clientX - rect.left) * scaleX;
-        mouseTarget[1] = (rect.height - (e.clientY - rect.top)) * scaleY;
-    }});
-    canvas.addEventListener('mouseleave', function() {{
-        mouseTarget[0] = 0;
-        mouseTarget[1] = 0;
-    }});
-    canvas.addEventListener('touchmove', function(e) {{
-        var t = e.touches[0];
-        var rect = canvas.getBoundingClientRect();
-        var scaleX = canvas.width / rect.width;
-        var scaleY = canvas.height / rect.height;
-        mouseTarget[0] = (t.clientX - rect.left) * scaleX;
-        mouseTarget[1] = (rect.height - (t.clientY - rect.top)) * scaleY;
-    }}, {{ passive: true }});
-
-    function resize() {{
-        var rect = container.getBoundingClientRect();
-        var w = Math.floor(rect.width * (isLowEnd ? 1 : 2));
-        var h = Math.floor(rect.height * (isLowEnd ? 1 : 2));
-        canvas.width = w;
-        canvas.height = h;
-        gl.viewport(0, 0, w, h);
-        gl.uniform3f(locs.iResolution, w, h, 1);
-    }}
-    resize();
-    var ro = new ResizeObserver(resize);
-    ro.observe(container);
-
-    function animate(time) {{
-        requestAnimationFrame(animate);
-        if (time - lastTime < 33) return;
-        lastTime = time;
-
-        gl.uniform1f(locs.iTime, time * 0.001);
-
-        var tau = Math.max(0.001, params.mouseDampening);
-        var dt = 0.016;
-        var factor = 1 - Math.exp(-dt / tau);
-        mouseCurrent[0] += (mouseTarget[0] - mouseCurrent[0]) * factor;
-        mouseCurrent[1] += (mouseTarget[1] - mouseCurrent[1]) * factor;
-        gl.uniform2fv(locs.iMouse, mouseCurrent);
-
-        gl.uniform3fv(locs.uColor0, colors[0]);
-        gl.uniform3fv(locs.uColor1, colors[1]);
-        gl.uniform3fv(locs.uColor2, colors[2]);
-        gl.uniform3fv(locs.uBgColor, bgColor);
-
-        gl.uniform1f(locs.uSpeed, params.speed);
-        gl.uniform1i(locs.uStreakCount, params.streakCount);
-        gl.uniform1f(locs.uStreakWidth, params.streakWidth);
-        gl.uniform1f(locs.uStreakLength, params.streakLength);
-        gl.uniform1f(locs.uGlow, params.glow);
-        gl.uniform1f(locs.uDensity, params.density);
-        gl.uniform1f(locs.uTwinkle, params.twinkle);
-        gl.uniform1f(locs.uZoom, params.zoom);
-        gl.uniform1f(locs.uBgGlow, params.bgGlow);
-        gl.uniform1f(locs.uMouseEnabled, params.mouseEnabled);
-        gl.uniform1f(locs.uMouseStrength, params.mouseStrength);
-        gl.uniform1f(locs.uMouseRadius, params.mouseRadius);
-
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    }}
-    requestAnimationFrame(animate);
-
-    document.addEventListener('visibilitychange', function() {{
-        if (document.hidden) {{
-            cancelAnimationFrame(animate);
-        }}
-    }});
-}})();
-
 // ===== ECharts 图表 =====
 (function() {{
-    // 检查 ECharts 是否加载成功
-    if (typeof echarts === 'undefined') {{
-        console.warn('ECharts 加载失败，使用 CSS 图表回退');
-        return;
-    }}
+    if (typeof echarts === 'undefined') return;
 
     var chartData = {chart_json};
 
@@ -1133,23 +763,24 @@ body {{
         }},
         series: [{{
             type: 'pie',
-            radius: ['40%', '70%'],
+            radius: ['35%', '65%'],
             center: ['50%', '55%'],
             avoidLabelOverlap: true,
             itemStyle: {{
-                borderRadius: 6,
-                borderColor: '#000',
+                borderRadius: 2,
+                borderColor: '#0a0e0a',
                 borderWidth: 2
             }},
             label: {{
                 show: true,
                 position: 'outside',
                 formatter: '{{b}}\\n{{d}}%',
-                color: 'rgba(255,255,255,0.6)',
-                fontSize: 11
+                color: 'rgba(200,255,200,0.5)',
+                fontSize: 10,
+                fontFamily: "'JetBrains Mono', monospace"
             }},
             labelLine: {{
-                lineStyle: {{ color: 'rgba(255,255,255,0.2)' }}
+                lineStyle: {{ color: 'rgba(200,255,200,0.15)' }}
             }},
             data: chartData.pie_data
         }}]
@@ -1170,34 +801,36 @@ body {{
             left: '3%',
             right: '4%',
             bottom: '3%',
-            top: '10%',
+            top: '8%',
             containLabel: true
         }},
         xAxis: {{
             type: 'category',
             data: chartData.hourly_labels,
             axisLabel: {{
-                color: 'rgba(255,255,255,0.4)',
-                fontSize: 10,
-                rotate: 0,
-                interval: 2
+                color: 'rgba(200,255,200,0.3)',
+                fontSize: 9,
+                fontFamily: "'JetBrains Mono', monospace"
             }},
-            axisLine: {{ lineStyle: {{ color: 'rgba(255,255,255,0.1)' }} }},
+            axisLine: {{ lineStyle: {{ color: 'rgba(0,255,136,0.08)' }} }},
             axisTick: {{ show: false }}
         }},
         yAxis: {{
             type: 'value',
-            name: '分钟',
-            nameTextStyle: {{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }},
-            axisLabel: {{ color: 'rgba(255,255,255,0.4)', fontSize: 10 }},
-            splitLine: {{ lineStyle: {{ color: 'rgba(255,255,255,0.05)' }} }},
+            name: '',
+            axisLabel: {{
+                color: 'rgba(200,255,200,0.3)',
+                fontSize: 9,
+                fontFamily: "'JetBrains Mono', monospace"
+            }},
+            splitLine: {{ lineStyle: {{ color: 'rgba(0,255,136,0.04)' }} }},
             axisLine: {{ show: false }},
             axisTick: {{ show: false }}
         }},
         series: [{{
             name: '活跃度',
             type: 'bar',
-            barWidth: '60%',
+            barWidth: '55%',
             data: chartData.hourly_values.map(function(val, idx) {{
                 return {{
                     value: val,
@@ -1209,21 +842,9 @@ body {{
                     }}
                 }};
             }})
-        }}],
-        // 峰值时段标记
-        markLine: {{
-            symbol: 'none',
-            data: chartData.peak_labels.map(function(label) {{
-                var idx = chartData.hourly_labels.indexOf(label);
-                return {{
-                    xAxis: idx >= 0 ? idx : 0,
-                    label: {{ show: false }}
-                }};
-            }})
-        }}
+        }}]
     }});
 
-    // 响应式
     window.addEventListener('resize', function() {{
         pieChart.resize();
         hourlyChart.resize();
@@ -1245,14 +866,14 @@ def _build_categories_html(stats: list) -> str:
         return ""
     html = ""
     for cat in stats:
-        color = _get_category_color(cat["category"])
+        color, _ = _get_phosphor_palette(cat["category"])
         html += f"""
         <div class="cat-bar">
             <span class="cat-name"><span class="cat-dot" style="background:{color}"></span>{cat['name']}</span>
             <div class="bar-track">
-                <div class="bar-fill" style="width:{cat['percentage']}%;background:linear-gradient(90deg,{color}cc,{color})"></div>
+                <div class="bar-fill" style="width:{cat['percentage']}%;background:{color}"></div>
             </div>
-            <span class="cat-val">{cat['percentage']}% ({cat['seconds']//60}min)</span>
+            <span class="cat-val">{cat['percentage']}% ({cat['seconds']//60}m)</span>
         </div>"""
     return html
 
@@ -1283,34 +904,23 @@ def _clean_app_name(raw: str) -> str:
     return name.replace("_", " ").title()
 
 
-def _get_app_icon_svg(category: str) -> str:
-    """返回应用图标 SVG（圆形彩色背景 + 分类图标）。"""
-    color_map = {
-        "development": "#3b82f6",
-        "browser": "#f97316",
-        "communication": "#eab308",
-        "design": "#a855f7",
-        "office": "#64748b",
-        "terminal": "#22c55e",
-        "other": "#6b7280",
-    }
-    bg_color = color_map.get(category, "#6b7280")
+def _get_app_icon(category: str) -> str:
+    """返回分类图标字符。"""
     icon_map = {
-        "development": "⟨/⟩",
-        "browser": "🌐",
-        "communication": "💬",
-        "design": "🎨",
-        "office": "📄",
-        "terminal": "⬛",
-        "other": "•",
+        "development": "</>",
+        "browser": "www",
+        "communication": "msg",
+        "design": "pal",
+        "office": "doc",
+        "terminal": "term",
+        "gaming": "game",
+        "finance": "fin",
+        "network": "net",
+        "system": "sys",
+        "audio": "snd",
+        "other": "...",
     }
-    icon = icon_map.get(category, "•")
-    return (
-        f'<div style="width:40px;height:40px;border-radius:10px;'
-        f'background:{bg_color};display:flex;align-items:center;'
-        f'justify-content:center;font-size:18px;flex-shrink:0;">'
-        f'{icon}</div>'
-    )
+    return icon_map.get(category, "...")
 
 
 def _build_timeline_html(timeline: list) -> str:
@@ -1326,8 +936,8 @@ def _build_timeline_html(timeline: list) -> str:
         start = block["start"].strftime("%H:%M") if hasattr(block["start"], "strftime") else str(block["start"])
         end = block["end"].strftime("%H:%M") if hasattr(block["end"], "strftime") else ""
         duration_min = block.get("duration", 0) // 60
-        color = _get_category_color(block["category"])
-        icon = CATEGORY_ICONS.get(block["category"], "⬜")
+        color, _ = _get_phosphor_palette(block["category"])
+        icon = CATEGORY_ICONS.get(block["category"], "·")
         name = CATEGORY_NAMES.get(block["category"], block["category"])
         apps = block.get("app_names", [])
         if isinstance(apps, list):
@@ -1347,11 +957,8 @@ def _build_timeline_html(timeline: list) -> str:
             <div class="tl-card-dot" style="background:{color}"></div>
             <div class="tl-card-body">
                 <div class="tl-card-top">
-                    {_get_app_icon_svg(block['category'])}
-                    <div class="tl-card-info">
-                        <div class="tl-card-name">{apps_str}</div>
-                        <div class="tl-card-cat">{icon} {name}</div>
-                    </div>
+                    <div class="tl-card-name">{apps_str}</div>
+                    <div class="tl-card-cat">{icon} {name}</div>
                 </div>
                 {'<div class="tl-card-sub">' + subtitle + '</div>' if subtitle else ''}
             </div>
@@ -1360,7 +967,7 @@ def _build_timeline_html(timeline: list) -> str:
 
     if len(timeline) - len(filtered) > 0:
         hidden = len(timeline) - len(filtered)
-        html += f'<div style="text-align:center;padding:8px;color:rgba(255,255,255,0.25);font-size:12px;">还有 {hidden} 个短块（<1分钟）已折叠</div>'
+        html += f'<div class="fold-hint">还有 {hidden} 个短块（<1分钟）已折叠</div>'
 
     return html
 
@@ -1378,16 +985,3 @@ def _build_holes_html(holes: list) -> str:
             <em>建议: {hole['suggestion']}</em>
         </div>"""
     return html
-
-
-def _get_category_color(category: str) -> str:
-    colors = {
-        "development": "#3b82f6",
-        "browser": "#f97316",
-        "communication": "#eab308",
-        "design": "#a855f7",
-        "office": "#64748b",
-        "terminal": "#22c55e",
-        "other": "#6b7280",
-    }
-    return colors.get(category, "#6b7280")

@@ -19,6 +19,11 @@ DEFAULT_SETTINGS = {
         "design": ["photoshop", "premiere", "figma", "sketch", "illustrator", "audition"],
         "office": ["word", "excel", "powerpoint", "wps", "outlook", "邮件", "文档", "表格", "演示"],
         "terminal": ["cmd", "powershell", "terminal", "git bash", "bash", "wsl"],
+        "gaming": ["tslgame", "pubg", "steamwebhelper", "steam", "epicgames", "xbox", "game"],
+        "finance": ["tonghuashun", "同花顺", "eastmoney", "东方财富", "snowball", "雪球", "stock"],
+        "network": ["guaiGu", "加速器", "vpn", "proxy", "shadowsocks", "clash"],
+        "system": ["explorer", "shellhost", "geek64", "联想电脑管家", "lenovomgr", "settings", "control"],
+        "audio": ["fsound", "fooyoo", "netease", "qqmusic", "spotify", "audiere"],
         "other": [],
     },
     "blackhole": {
@@ -43,6 +48,12 @@ DEFAULT_SETTINGS = {
         "ai-recorder": "AI Recorder",
         "powershell": "PowerShell",
         "cmd": "CMD",
+        "tslgame": "PUBG",
+        "fsound": "FSound",
+        "oopz": "Oopz",
+        "lenovomgr": "联想电脑管家",
+        "guaiGu": "古怪加速器",
+        "tonghuashun": "同花顺",
     },
 }
 
