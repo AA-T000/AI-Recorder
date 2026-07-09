@@ -253,8 +253,9 @@ def calculate_efficiency(blocks: List[Dict], holes: List[Dict]) -> int:
     """计算效率评分 0-100。
 
     评分构成：
-    - 专注时长占比（60分）：>= 20分钟的连续块占总时长的比例
-    - 黑洞惩罚（40分）：碎片化、微任务、会议陷阱等扣分
+    - 有效专注占比（70分）：生产类活动占总时长的比例
+    - 专注度加成（30分）：>= 20分钟的长块占总时长的比例
+    - 黑洞惩罚（最多扣20分）：碎片化、微任务、会议陷阱等扣分
 
     注意：评分只是参考，不代表个人价值。低分意味着"有成长空间"，不是"今天白过了"。
     """
@@ -265,22 +266,31 @@ def calculate_efficiency(blocks: List[Dict], holes: List[Dict]) -> int:
     if total_seconds == 0:
         return 0
 
-    # 专注时长（>= 20分钟的连续块）
-    focus_blocks = [b for b in blocks if b.get("duration", 0) >= 1200]
-    focus_seconds = sum(b.get("duration", 0) for b in focus_blocks)
-    focus_ratio = focus_seconds / total_seconds
+    # 有效专注类别（生产类活动）
+    productive_cats = {"development", "browser", "communication", "terminal", "office", "design"}
+
+    # 生产类总时长
+    productive_seconds = sum(
+        b.get("duration", 0) for b in blocks
+        if b.get("category") in productive_cats
+    )
+    productive_ratio = productive_seconds / total_seconds
+
+    # 长块（>= 20分钟）总时长
+    long_blocks = [b for b in blocks if b.get("duration", 0) >= 1200]
+    long_ratio = sum(b.get("duration", 0) for b in long_blocks) / total_seconds
 
     # 分数构成
-    score = int(focus_ratio * 60)
+    score = int(productive_ratio * 70 + long_ratio * 30)
 
-    # 黑洞扣分
+    # 黑洞扣分（温和惩罚，最多扣20分）
     penalty = 0
     for hole in holes:
         if hole["severity"] == "warning":
-            penalty += 12
+            penalty += 8
         elif hole["severity"] == "info":
-            penalty += 6
-    score -= min(penalty, 40)
+            penalty += 4
+    score -= min(penalty, 20)
 
     return max(0, min(100, score))
 
