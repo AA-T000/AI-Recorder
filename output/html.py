@@ -237,14 +237,14 @@ body {{
     top: 0; left: 0;
     width: 100vw; height: 100vh;
     z-index: 0;
-    opacity: 0.45;
+    opacity: 0.7;
 }}
 
 /* ===== 暗角叠加层 ===== */
 .page-overlay {{
     position: relative;
     z-index: 1;
-    background: radial-gradient(ellipse at 50% 0%, transparent 30%, rgba(10,14,10,0.7) 70%, #0a0e0a 100%);
+    background: radial-gradient(ellipse at 50% 0%, transparent 50%, rgba(10,14,10,0.5) 80%, #0a0e0a 100%);
     min-height: 100vh;
     pointer-events: none;
 }}

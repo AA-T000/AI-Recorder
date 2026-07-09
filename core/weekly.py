@@ -375,6 +375,27 @@ body::after {{
     background: radial-gradient(ellipse at 50% 30%, transparent 50%, rgba(0,0,0,0.3) 100%);
 }}
 
+/* ===== WebGL 流光背景容器 ===== */
+#bg-canvas {{
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    z-index: 0;
+    opacity: 0.7;
+}}
+
+/* ===== 暗角叠加层 ===== */
+.page-overlay {{
+    position: relative;
+    z-index: 1;
+    background: radial-gradient(ellipse at 50% 0%, transparent 50%, rgba(10,14,10,0.5) 80%, #0a0e0a 100%);
+    min-height: 100vh;
+    pointer-events: none;
+}}
+.page-overlay > * {{
+    pointer-events: auto;
+}}
+
 /* ===== 容器 ===== */
 .wrap {{
     max-width: 860px;
@@ -531,6 +552,9 @@ body::after {{
 </style>
 </head>
 <body>
+<canvas id="bg-canvas"></canvas>
+
+<div class="page-overlay">
 <div class="wrap">
 
     <!-- ===== 头部 ===== -->
@@ -606,10 +630,55 @@ body::after {{
 
     <div class="footer">AI RECORDER</div>
 
-</div>
+</div><!-- /.wrap -->
+</div><!-- /.page-overlay -->
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <script>
+// ===== WebGL 流光背景（磷光终端绿） =====
+(function() {{
+    var container = document.getElementById('bg-canvas');
+    if (!container) return;
+    var gl = container.getContext('webgl', {{ alpha: true, antialias: false }});
+    if (!gl) {{ container.style.display = 'none'; return; }}
+
+    var colors = [[0.0,1.0,0.53],[0.2,0.8,0.4],[0.5,0.9,0.3]];
+    var bgColor = [0.04,0.06,0.04];
+
+    var vertSrc = `attribute vec2 position;attribute vec2 uv;varying vec2 vUv;void main(){{vUv=uv;gl_Position=vec4(position,0.0,1.0);}}`;
+    var fragSrc = `precision highp float;uniform vec3 iResolution;uniform float iTime;uniform vec3 uColor0;uniform vec3 uColor1;uniform vec3 uColor2;uniform vec3 uBgColor;uniform float uStreakCount;uniform float uSpeed;uniform float uGlow;uniform float uDensity;uniform float uTwinkle;varying vec2 vUv;
+        vec3 pal(float h){{if(h<0.333)return uColor0;if(h<0.666)return uColor1;return uColor2;}}
+        void main(){{
+            vec2 uv=vUv*iResolution.xy;float T=iTime*uSpeed;
+            float angRings=max(1.0,floor(6.28*max(uDensity,0.05)+0.5));
+            vec2 Y=vec2(0.005,6.283/angRings);
+            float bgGlow=exp(-dot(uv-iResolution.xy*0.5,uv-iResolution.xy*0.5)/max(dot(iResolution.xy,iResolution.xy)*0.3,1e-4))*0.15;
+            vec3 col=uBgColor+vec3(bgGlow);
+            for(int m=0;m<16;m++){{if(float(m)>=uStreakCount)break;float jf=float(m)+1.0;float ic=fract(sin(dot(vec2(jf,7.0),vec2(7.0,11.0)))*73.0);float h=fract(8663.0*ic);vec3 c=pal(h);float weight=mix(1.5,1.0+sin(T+7.0*h+4.0),uTwinkle);float phase=fract((T+T*ic)/Y.y+0.5);float trail=exp(-abs(uv.y-phase*iResolution.y)/max(Y.x*iResolution.y,1.0));float fade=smoothstep(0.0,0.1,phase)*smoothstep(1.0,0.7,phase);col+=c*trail*weight*0.6*fade;}}
+            gl_FragColor=vec4(col*uGlow,1.0);
+        }}`;
+
+    function cs(src,type){{var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return gl.getShaderParameter(s,gl.COMPILE_STATUS)?s:null;}}
+    var v=cs(vertSrc,gl.VERTEX_SHADER),f=cs(fragSrc,gl.FRAGMENT_SHADER);
+    if(!v||!f){{container.style.display='none';return;}}
+    var p=gl.createProgram();gl.attachShader(p,v);gl.attachShader(p,f);gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)){{container.style.display='none';return;}}
+    gl.useProgram(p);
+    var pos=new Float32Array([-1,-1,1,-1,-1,1,1,1]),uv=new Float32Array([0,0,1,0,0,1,1,1]);
+    var pb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.bufferData(gl.ARRAY_BUFFER,pos,gl.STATIC_DRAW);
+    var pl=gl.getAttribLocation(p,'position');gl.enableVertexAttribArray(pl);gl.vertexAttribPointer(pl,2,gl.FLOAT,false,0,0);
+    var ub=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,ub);gl.bufferData(gl.ARRAY_BUFFER,uv,gl.STATIC_DRAW);
+    var ul=gl.getAttribLocation(p,'uv');gl.enableVertexAttribArray(ul);gl.vertexAttribPointer(ul,2,gl.FLOAT,false,0,0);
+    var locs={{}};['iResolution','iTime','uColor0','uColor1','uColor2','uBgColor','uStreakCount','uSpeed','uGlow','uDensity','uTwinkle'].forEach(function(n){{locs[n]=gl.getUniformLocation(p,n);}});
+    var params={{speed:0.3,streakCount:3,glow:1.0,density:0.4,twinkle:0.8}};
+    var lt=0;
+    function resize(){{var r=container.getBoundingClientRect();var w=Math.floor(r.width*window.devicePixelRatio),h=Math.floor(r.height*window.devicePixelRatio);container.width=w;container.height=h;gl.viewport(0,0,w,h);gl.uniform3f(locs.iResolution,w,h,1);}}
+    resize();new ResizeObserver(resize).observe(container);
+    function animate(t){{requestAnimationFrame(animate);if(t-lt<33)return;lt=t;gl.uniform1f(locs.iTime,t*0.001);gl.uniform3fv(locs.uColor0,colors[0]);gl.uniform3fv(locs.uColor1,colors[1]);gl.uniform3fv(locs.uColor2,colors[2]);gl.uniform3fv(locs.uBgColor,bgColor);gl.uniform1f(locs.uSpeed,params.speed);gl.uniform1i(locs.uStreakCount,params.streakCount);gl.uniform1f(locs.uGlow,params.glow);gl.uniform1f(locs.uDensity,params.density);gl.uniform1f(locs.uTwinkle,params.twinkle);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);}}
+    requestAnimationFrame(animate);
+    document.addEventListener('visibilitychange',function(){{if(document.hidden)cancelAnimationFrame(animate);}});
+}})();
+
 var chartData = {chart_json};
 
 // 饼图
