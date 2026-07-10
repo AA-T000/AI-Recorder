@@ -305,6 +305,24 @@ def save_weekly_html_report(report_data: dict, start_date: Optional[date] = None
             "itemStyle": {"color": _get_category_color(cat["category"])}
         })
 
+    # 分类条形图 HTML（按百分比，与日报仪表盘风格一致）
+    categories_bars_html = ""
+    for cat in report_data.get("overall_categories", []):
+        color = _get_category_color(cat["category"])
+        pct = cat["percentage"]
+        mins = cat["total_seconds"] // 60
+        name = cat.get("name", cat["category"])
+        _bar = (
+            '        <div class="cat-bar">\n'
+            '            <span class="cat-name"><span class="cat-dot" style="background:{color}"></span>{name}</span>\n'
+            '            <div class="bar-track">\n'
+            '                <div class="bar-fill" style="width:{pct:.1f}%;background:linear-gradient(90deg,{color}cc,{color})"></div>\n'
+            '            </div>\n'
+            '            <span class="cat-val">{pct:.1f}% ({mins}min)</span>\n'
+            '        </div>\n'
+        )
+        categories_bars_html += _bar.format(color=color, name=name, pct=pct, mins=mins)
+
     chart_json = json.dumps({
         "pie_data": pie_data,
         "trend_dates": trend_dates,
@@ -444,6 +462,61 @@ body {{
     margin-bottom: 12px;
 }}
 
+/* ===== 分类占比条 ===== */
+.cat-bar {{
+    display: flex;
+    align-items: center;
+    margin: 10px 0;
+    gap: 12px;
+}}
+.cat-name {{
+    width: 70px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.6);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}}
+.cat-dot {{
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}}
+.bar-track {{
+    flex: 1;
+    height: 28px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+}}
+.bar-fill {{
+    height: 100%;
+    border-radius: 8px;
+    transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+    position: relative;
+}}
+.bar-fill::after {{
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%);
+    animation: barShimmer 2.5s ease-in-out infinite;
+}}
+@keyframes barShimmer {{
+    0%, 100% {{ transform: translateX(-100%); }}
+    50% {{ transform: translateX(100%); }}
+}}
+.cat-val {{
+    width: 100px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.45);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}}
+
 /* ===== 趋势条 ===== */
 .trend-item {{
     display: flex;
@@ -538,6 +611,8 @@ body {{
             <div class="chart-caption">时间分布</div>
             <div id="chart-weekly-pie" class="chart-container"></div>
         </div>
+        <!-- 分类条形图（按百分比） -->
+        {categories_bars_html}
     </div>
 
     <!-- ===== 3. 每日工作时长 ===== -->
