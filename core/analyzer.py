@@ -268,12 +268,16 @@ def detect_boreholes(blocks: List[Dict], settings: dict) -> List[Dict]:
 def calculate_efficiency(blocks: List[Dict], holes: List[Dict]) -> int:
     """计算效率评分 0-100。
 
-    评分构成：
-    - 有效专注占比（70分）：生产类活动占总时长的比例
-    - 专注度加成（30分）：>= 20分钟的长块占总时长的比例
-    - 黑洞惩罚（最多扣20分）：碎片化、微任务、会议陷阱等扣分
+    评分构成（四层维度）：
+    - 专注质量（55分）：长块（>=20分钟）中生产类活动占比，衡量"专注时的投入方向"
+    - 参与度（30分）：长块总时长占比，衡量"整天的专注程度"
+    - 一致性（15分）：总体生产类占比，衡量"全天的产出比例"
+    - 碎片化惩罚（最多-5分）：短块过多扣分
+    - 黑洞惩罚（最多-5分）：时间黑洞扣分
+    - 保底分（+5）：即使没有长块，有部分生产活动也有基础分
 
-    注意：评分只是参考，不代表个人价值。低分意味着"有成长空间"，不是"今天白过了"。
+    注意：游戏/网络/音频等休闲活动不算生产类，但如果是长块（专注投入）
+    仍会贡献参与度分数。评分衡量的是"专注质量"而非"是否一直在工作"。
     """
     if not blocks:
         return 0
@@ -282,33 +286,50 @@ def calculate_efficiency(blocks: List[Dict], holes: List[Dict]) -> int:
     if total_seconds == 0:
         return 0
 
-    # 有效专注类别（生产类活动）
+    # 生产类类别
     productive_cats = {"development", "browser", "communication", "terminal", "office", "design"}
 
-    # 生产类总时长
+    # 各项指标
     productive_seconds = sum(
         b.get("duration", 0) for b in blocks
         if b.get("category") in productive_cats
     )
     productive_ratio = productive_seconds / total_seconds
 
-    # 长块（>= 20分钟）总时长
     long_blocks = [b for b in blocks if b.get("duration", 0) >= 1200]
-    long_ratio = sum(b.get("duration", 0) for b in long_blocks) / total_seconds
+    long_total = sum(b.get("duration", 0) for b in long_blocks)
+    long_ratio = long_total / total_seconds
 
-    # 分数构成
-    score = int(productive_ratio * 70 + long_ratio * 30)
+    # 专注质量：长块中生产类占比；若无长块则用总体生产比代替
+    long_prod_seconds = sum(
+        b.get("duration", 0) for b in blocks
+        if b.get("category") in productive_cats and b.get("duration", 0) >= 1200
+    )
+    focus_quality = long_prod_seconds / long_total if long_total > 0 else productive_ratio
 
-    # 黑洞扣分（温和惩罚，最多扣20分）
+    # 碎片化惩罚
+    short_ratio = 1 - long_ratio
+
+    # 黑洞扣分（降低上限，从20减至5）
     penalty = 0
     for hole in holes:
         if hole["severity"] == "warning":
-            penalty += 8
-        elif hole["severity"] == "info":
             penalty += 4
-    score -= min(penalty, 20)
+        elif hole["severity"] == "info":
+            penalty += 2
+    penalty = min(penalty, 5)
 
-    return max(0, min(100, score))
+    # 综合评分
+    score = (
+        focus_quality * 55
+        + long_ratio * 30
+        + productive_ratio * 15
+        - penalty
+        - int(short_ratio * 5)
+        + 5  # 保底分
+    )
+
+    return max(0, min(100, int(score)))
 
 
 def check_data_integrity(records: List[Dict]) -> List[Dict]:
