@@ -118,6 +118,9 @@ class WindowRecorder:
         self._last_title: Optional[str] = None
         self._last_start: Optional[datetime] = None
         self._last_category: Optional[str] = None
+        # 前置宽限期：新应用出现在前台后，需持续停留 grace_period 秒才创建记录
+        self._grace_start: Optional[datetime] = None
+        self._grace_period = self._settings.get("idle_detection", {}).get("foreground_grace_period", 15)
         init_db()
         logger.info("数据采集器已初始化")
 
@@ -126,12 +129,23 @@ class WindowRecorder:
 
         逻辑：
         1. 如果窗口没变 → 延长上一段的结束时间
-        2. 如果应用变了 → 关闭旧段，开启新段
-        3. 同一应用但不同窗口 → 关闭旧段，开启新段（记录为不同活动）
+        2. 如果应用变了 → 先经过前置宽限期（grace period），通过后关闭旧段、开启新段
+        3. 同一应用但不同窗口 → 也延长（比如 VS Code 切换了不同文件）
         """
         categories = self._settings.get("categories", {})
         category = _classify_app(app_name, title, categories)
         now = datetime.now()
+
+        # --- 前置宽限期：仅在新应用切换时生效 ---
+        app_changed = (self._last_app is None or self._last_app != app_name)
+        if app_changed:
+            if self._grace_start is not None:
+                elapsed = (now - self._grace_start).total_seconds()
+                if elapsed < self._grace_period:
+                    # 新应用停留时间不足，跳过本次采样
+                    self._grace_start = now
+                    return
+            self._grace_start = now  # 重置宽限期计时器
 
         # 完全相同的窗口（应用+标题都没变）→ 延长上一段
         if (self._last_app == app_name and self._last_title == title

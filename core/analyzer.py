@@ -46,6 +46,22 @@ CATEGORY_ICONS = {
 }
 
 
+def filter_short_records(records: List[Dict], min_duration: int = 30) -> List[Dict]:
+    """过滤掉持续时间过短的原始记录。
+
+    在时间线合并之前运行，剔除前台窗口一闪而过产生的噪声记录
+    （如误触切换、后台进程短暂获得焦点等）。
+
+    Args:
+        records: 从数据库获取的原始记录列表
+        min_duration: 最短记录时长（秒），默认 30
+
+    Returns:
+        过滤后的记录列表
+    """
+    return [r for r in records if r.get("duration_seconds", 0) >= min_duration]
+
+
 def _seconds_to_hm(seconds: int) -> str:
     """秒数转时:分。"""
     h = seconds // 3600
@@ -366,6 +382,27 @@ def analyze_day(target_date: date, settings: Optional[dict] = None) -> Dict[str,
             "date": target_date.isoformat(),
             "has_data": False,
             "message": f"{target_date} 没有记录数据",
+        }
+
+    # 应用最短时长过滤，剔除前台一闪而过的噪声记录
+    min_dur = settings.get("idle_detection", {}).get("minimum_recorded_duration", 30)
+    records = filter_short_records(records, min_dur)
+    if not records:
+        return {
+            "date": target_date.isoformat(),
+            "has_data": True,
+            "timeline": [],
+            "category_stats": [],
+            "efficiency": 0,
+            "holes": [],
+            "record_count": len(get_records_by_date(target_date)),
+            "block_count": 0,
+            "focus_sessions": [],
+            "peak_hours": [],
+            "hourly_distribution": {},
+            "integrity_issues": [],
+            "total_seconds": 0,
+            "total_actual_seconds": 0,
         }
 
     # 构建合并后的时间线（粗粒度）

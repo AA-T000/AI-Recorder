@@ -31,6 +31,10 @@ DEFAULT_SETTINGS = {
         "focus_block_minutes": 20,
         "fragment_window_minutes": 5,
     },
+    "idle_detection": {
+        "foreground_grace_period": 15,
+        "minimum_recorded_duration": 30,
+    },
     "app_aliases": {
         # 默认映射，用户可在 settings.yaml 中覆盖
         "pycharm64": "PyCharm",
