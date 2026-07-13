@@ -65,9 +65,9 @@ class TrayIcon:
         """根据运行状态动态构建菜单。"""
         if self._is_running:
             if self._is_paused:
-                status_item = pystray.MenuItem("⏸ 已暂停", self._resume, checked=True)
+                status_item = pystray.MenuItem("⏸ 已暂停", self._resume, checked=lambda _: True)
             else:
-                status_item = pystray.MenuItem("▶ 运行中", self._pause, checked=True)
+                status_item = pystray.MenuItem("▶ 运行中", self._pause, checked=lambda _: True)
         else:
             status_item = pystray.MenuItem("▶ 开始记录", self._start_recording, checked=lambda _: False)
 
