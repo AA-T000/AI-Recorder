@@ -1,82 +1,108 @@
-"""通知工具 — Windows 系统通知气泡。"""
+"""通知工具 — Windows 系统通知气泡。
+
+使用 Windows Shell_NotifyIconW 气球提示，通过 ctypes 调用 shell32.dll，
+无需 tkinter、winrt 或任何其他第三方依赖。
+"""
 
 import ctypes
-import os
+import ctypes.wintypes as wt
 import threading
-import time
+
+
+shell32 = ctypes.windll.shell32
+user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+
+class NOTIFYICONDATA(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wt.DWORD),
+        ("hWnd", wt.HWND),
+        ("uID", wt.UINT),
+        ("uFlags", wt.UINT),
+        ("uCallbackMessage", wt.DWORD),
+        ("hIcon", wt.HICON),
+        ("szTip", ctypes.c_char * 128),
+        ("dwState", wt.DWORD),
+        ("dwStateMask", wt.DWORD),
+        ("szInfo", ctypes.c_char * 256),
+        ("uVersion", wt.UINT),
+        ("szInfoTitle", ctypes.c_char * 64),
+        ("dwInfoFlags", wt.DWORD),
+    ]
+
+
+# NIM constants
+NIM_ADD = 0x00
+NIM_MODIFY = 0x01
+NIM_DELETE = 0x02
+NIF_INFO = 0x10
+
+# NIIF constants
+NIIF_INFO = 0x01
 
 
 def show_toast(title: str, message: str, duration: int = 4):
-    """在桌面右下角显示系统通知气泡，自动消失。
+    """在桌面右下角显示 Windows 气球提示通知，自动消失。
 
     Args:
-        title: 通知标题
-        message: 通知内容
+        title: 通知标题（最大 63 字符）
+        message: 通知内容（最大 255 字符）
         duration: 显示秒数，默认4秒
     """
-    def _show():
-        try:
-            # 使用 Windows 10+ 原生 Toast Notification API
-            notification = ctypes.windll.user32
-            # Shell_NotifyIcon 方式可能不可靠，改用 tkinter 临时窗口
-            _show_tkinter_toast(title, message, duration)
-        except Exception:
-            pass
-
-    def _show_tkinter_toast(title: str, message: str, duration: int):
-        """用 tkinter 在右下角显示通知窗口。"""
-        import tkinter as tk
-        from tkinter import ttk
-
-        root = tk.Tk()
-        root.overrideredirect(True)  # 无边框
-        root.attributes("-topmost", True)  # 置顶
-
-        # 获取屏幕尺寸
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
-
-        # 窗口大小
-        window_width = 320
-        window_height = 80
-        x = screen_width - window_width - 20  # 右下角
-        y = screen_height - window_height - 80
-
-        root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        root.configure(bg="#1e1e1e")
-
-        # 内容标签
-        label = tk.Label(
-            root,
-            text=f"{title}\n{message}",
-            bg="#1e1e1e",
-            fg="#ffffff",
-            font=("Microsoft YaHei UI", 10),
-            justify=tk.LEFT,
-            padx=15,
-            pady=10,
-        )
-        label.pack(fill=tk.BOTH, expand=True)
-
-        # 关闭按钮（右上角 ×）
-        close_btn = tk.Button(
-            root,
-            text="×",
-            bg="#1e1e1e",
-            fg="#ffffff",
-            font=("Microsoft YaHei UI", 12, "bold"),
-            bd=0,
-            relief=tk.FLAT,
-            cursor="hand2",
-            command=root.destroy,
-        )
-        close_btn.place(relx=1.0, rely=0.0, anchor="ne", x=5, y=-5)
-
-        # 自动关闭计时器
-        root.after(duration * 1000, root.destroy)
-
-        root.mainloop()
-
-    # 在新线程中显示，不阻塞主程序
-    thread = threading.Thread(target=_show, daemon=True)
+    thread = threading.Thread(target=_show, args=(title, message, duration), daemon=True)
     thread.start()
+
+
+def _show(title: str, message: str, duration: int):
+    """发送气球提示通知。"""
+    try:
+        # 注册窗口类
+        class_name = b"AIToastClass"
+        wc = ctypes.WNDCLASSW()
+        wc.lpfnWndProc = ctypes.cast(user32.DefWindowProcW, ctypes.c_void_p)
+        wc.lpszClassName = class_name.decode("utf-16")
+        wc.hInstance = kernel32.GetModuleHandleW(None)
+        atom = user32.RegisterClassW(ctypes.byref(wc))
+        if not atom:
+            return
+
+        # 创建隐藏窗口
+        hwnd = user32.CreateWindowExW(
+            0, wc.lpszClassName, "AIToast",
+            0, 0, 0, 0, 0, 0, 0, kernel32.GetModuleHandleW(None), 0
+        )
+        if not hwnd:
+            return
+
+        # 构建气球提示
+        nid = NOTIFYICONDATA()
+        nid.cbSize = ctypes.sizeof(NOTIFYICONDATA)
+        nid.hWnd = hwnd
+        nid.uID = 1
+        nid.uFlags = NIF_INFO
+        nid.szInfo = message.encode("utf-8", errors="replace")[:255]
+        nid.szInfoTitle = title.encode("utf-8", errors="replace")[:63]
+        nid.dwInfoFlags = NIIF_INFO
+        nid.uVersion = 4
+
+        # 先添加图标到托盘（气球提示需要一个图标存在）
+        nid.uFlags = 0x04  # NIF_TIP
+        nid.szTip = b"AI Recorder"
+        shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
+
+        # 发送气球提示
+        nid.uFlags = NIF_INFO
+        shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(nid))
+
+        # 延迟清理
+        def cleanup():
+            time.sleep(duration)
+            shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid))
+            user32.DestroyWindow(hwnd)
+
+        import time
+        threading.Thread(target=cleanup, daemon=True).start()
+
+    except Exception:
+        pass
