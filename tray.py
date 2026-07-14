@@ -74,7 +74,7 @@ class TrayIcon:
         today_str = date.today().isoformat()
         yesterday_str = (date.today() - timedelta(days=1)).isoformat()
 
-        self._menu = pystray.Menu(
+        new_menu = pystray.Menu(
             # --- 采集控制 ---
             status_item,
             pystray.MenuItem("━━━━━━━━━━", lambda _: None, enabled=False),
@@ -99,6 +99,11 @@ class TrayIcon:
             # --- 退出 ---
             pystray.MenuItem("✖ 退出", self._quit),
         )
+
+        # 更新菜单（pystray 需要显式调用 update_menu）
+        if self._icon:
+            self._icon.update_menu(new_menu)
+        self._menu = new_menu
 
     # ------------------------------------------------------------------ #
     # 采集控制
