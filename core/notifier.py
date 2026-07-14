@@ -6,7 +6,7 @@
 import threading
 
 
-def show_toast(title: str, message: str, duration: int = 4):
+def show_toast(title: str, message: str, duration: int = 3):
     """在桌面右下角显示 Windows 原生通知气泡，自动消失。
 
     Args:

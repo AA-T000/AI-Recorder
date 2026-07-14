@@ -309,7 +309,7 @@ class TrayIcon:
             f"今天: {total_h}h{rem_mins}m\n\n"
             f"最近 3 天:\n" + "\n".join(recent_lines)
         )
-        show_toast("AI Recorder", msg, duration=8)
+        show_toast("AI Recorder", msg, duration=3)
 
     def _open_latest_report(self, item):
         """打开最新的报告文件（日报或周报）。"""
