@@ -320,7 +320,7 @@ class TrayIcon:
             return
 
         try:
-            # 找最新的 HTML 报告文件
+            # 找最新的 HTML 报告文件（按修改时间排序）
             reports = [
                 f for f in os.listdir(REPORTS_DIR)
                 if f.endswith(".html")
@@ -329,8 +329,9 @@ class TrayIcon:
                 show_toast("AI Recorder", "没有找到报告文件")
                 return
 
-            # 按文件名排序（日期在文件名中，字符串排序有效）
-            latest = sorted(reports)[-1]
+            # 按文件修改时间排序，取最新的
+            reports.sort(key=lambda f: os.path.getmtime(os.path.join(REPORTS_DIR, f)))
+            latest = reports[-1]
             filepath = os.path.join(REPORTS_DIR, latest)
 
             # 用默认浏览器打开
