@@ -100,9 +100,6 @@ class TrayIcon:
             pystray.MenuItem("✖ 退出", self._quit),
         )
 
-        # 更新菜单（pystray 需要显式调用 update_menu）
-        if self._icon:
-            self._icon.update_menu(new_menu)
         self._menu = new_menu
 
     # ------------------------------------------------------------------ #
