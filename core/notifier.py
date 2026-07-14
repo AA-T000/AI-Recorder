@@ -25,8 +25,8 @@ def _show(title: str, message: str, duration: int):
         notification.notify(
             title=title,
             message=message,
+            app_name="AI Recorder",
             timeout=3,
-            app_id="AI-Recorder",
         )
     except Exception:
         pass
