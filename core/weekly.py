@@ -772,20 +772,26 @@ body {{
         gaming:'#ef4444', finance:'#10b981', network:'#06b6d4',
         system:'#8b5cf6', audio:'#ec4899', other:'#6b7280'
     }};
+    var catNames = {{
+        development:'开发', browser:'浏览器', communication:'通讯',
+        design:'设计', office:'办公', terminal:'终端',
+        gaming:'游戏', finance:'金融', network:'网络',
+        system:'系统工具', audio:'音频', other:'其他'
+    }};
     chartData.daily_cat_names.forEach(function(cat) {{
         stackSeries.push({{
-            name: cat,
+            name: catNames[cat] || cat,
             type: 'bar',
             stack: 'total',
             emphasis: {{ focus: 'series' }},
             itemStyle: {{ color: catColors[cat] || '#64748b' }},
-            data: chartData.daily_cat_series.map(function(d) {{ return (d.categories[cat] || 0) / 60; }})
+            data: chartData.daily_cat_series.map(function(d) {{ return ((d.categories[cat] || 0) / 60).toFixed(1); }})
         }});
     }});
     stackChart.setOption({{
         tooltip:{{trigger:'axis',axisPointer:{{type:'shadow'}},formatter:function(params) {{
             var t = params[0].name;
-            var lines = params.map(function(p) {{ return p.marker + p.seriesName + ': ' + p.value + 'min'; }}).join('<br/>');
+            var lines = params.map(function(p) {{ return p.marker + p.seriesName + ': ' + parseFloat(p.value).toFixed(1) + ' 分钟'; }}).join('<br/>');
             return t + '<br/>' + lines;
         }}}},
         legend:{{show:true,textStyle:{{color:'rgba(255,255,255,0.5)',fontSize:10}},top:0}},
