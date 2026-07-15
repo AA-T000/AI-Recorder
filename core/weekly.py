@@ -323,10 +323,37 @@ def save_weekly_html_report(report_data: dict, start_date: Optional[date] = None
         )
         categories_bars_html += _bar.format(color=color, name=name, pct=pct, mins=mins)
 
+    # 每日分类占比（堆叠柱状图数据）
+    daily_cat_series = []
+    daily_cat_names = set()
+    daily_dates = []
+    for d in report_data.get("trend", []):
+        daily_dates.append(d["date"])
+        for cat in d.get("categories", []):
+            cname = cat["category"]
+            daily_cat_names.add(cname)
+        daily_cat_series.append({
+            "date": d["date"],
+            "categories": {c["category"]: c["seconds"] for c in d.get("categories", [])}
+        })
+
+    # 每日效率评分
+    from core.analyzer import analyze_day
+    from config.settings import load_settings
+    settings = load_settings()
+    daily_efficiencies = []
+    for d in report_data.get("trend", []):
+        day_result = analyze_day(date.fromisoformat(d["date"]), settings)
+        daily_efficiencies.append(day_result.get("efficiency", 0))
+
     chart_json = json.dumps({
         "pie_data": pie_data,
         "trend_dates": trend_dates,
         "trend_hours": trend_hours,
+        "daily_cat_series": daily_cat_series,
+        "daily_cat_names": list(daily_cat_names),
+        "daily_efficiencies": daily_efficiencies,
+        "daily_dates": daily_dates,
     }, ensure_ascii=False)
 
     total_hours_val = report_data.get('total_seconds', 0) // 3600
@@ -627,7 +654,31 @@ body {{
         </div>
     </div>
 
-    <!-- ===== 4. AI 分析 ===== -->
+    <!-- ===== 4. 分类趋势对比 ===== -->
+    <div class="section">
+        <div class="section-header">
+            <div class="section-icon">📊</div>
+            <div class="section-title">每日分类对比</div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-caption">每天各分类时长（分钟）</div>
+            <div id="chart-weekly-cat-stack" class="chart-container"></div>
+        </div>
+    </div>
+
+    <!-- ===== 5. 效率排名 ===== -->
+    <div class="section">
+        <div class="section-header">
+            <div class="section-icon">🏆</div>
+            <div class="section-title">每日效率评分</div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-caption">效率评分 0-100</div>
+            <div id="chart-weekly-efficiency" class="chart-container" style="height:250px;"></div>
+        </div>
+    </div>
+
+    <!-- ===== 6. AI 分析 ===== -->
     {f'<div class="section"><div class="section-header"><div class="section-icon">🤖</div><div class="section-title">AI 分析</div></div><div class="ai-section">{ai_report}</div></div>' if ai_report else ''}
 
     <div class="footer">AI Recorder · 你的智能工作伙伴</div>
@@ -712,7 +763,62 @@ body {{
         }}]
     }});
 
-    window.addEventListener('resize',function(){{pieChart.resize();trendChart.resize();}});
+    // 分类堆叠柱状图
+    var stackChart=echarts.init(document.getElementById('chart-weekly-cat-stack'),null,{{renderer:'canvas'}});
+    var stackSeries = [];
+    var catColors = {{
+        development:'#3b82f6', browser:'#f97316', communication:'#eab308',
+        design:'#a855f7', office:'#64748b', terminal:'#22c55e',
+        gaming:'#ef4444', finance:'#10b981', network:'#06b6d4',
+        system:'#8b5cf6', audio:'#ec4899', other:'#6b7280'
+    }};
+    chartData.daily_cat_names.forEach(function(cat) {{
+        stackSeries.push({{
+            name: cat,
+            type: 'bar',
+            stack: 'total',
+            emphasis: {{ focus: 'series' }},
+            itemStyle: {{ color: catColors[cat] || '#64748b' }},
+            data: chartData.daily_cat_series.map(function(d) {{ return (d.categories[cat] || 0) / 60; }})
+        }});
+    }});
+    stackChart.setOption({{
+        tooltip:{{trigger:'axis',axisPointer:{{type:'shadow'}},formatter:function(params) {{
+            var t = params[0].name;
+            var lines = params.map(function(p) {{ return p.marker + p.seriesName + ': ' + p.value + 'min'; }}).join('<br/>');
+            return t + '<br/>' + lines;
+        }}}},
+        legend:{{show:true,textStyle:{{color:'rgba(255,255,255,0.5)',fontSize:10}},top:0}},
+        grid:{{left:'3%',right:'4%',bottom:'3%',top:'15%',containLabel:true}},
+        xAxis:{{type:'category',data:chartData.daily_dates,axisLabel:{{color:'rgba(255,255,255,0.4)',fontSize:11}},axisLine:{{lineStyle:{{color:'rgba(255,255,255,0.1)'}}}},axisTick:{{show:false}}}},
+        yAxis:{{type:'value',name:'分钟',nameTextStyle:{{color:'rgba(255,255,255,0.3)',fontSize:10}},axisLabel:{{color:'rgba(255,255,255,0.4)'}},splitLine:{{lineStyle:{{color:'rgba(255,255,255,0.05)'}}}},axisLine:{{show:false}},axisTick:{{show:false}}}},
+        series: stackSeries
+    }});
+
+    // 效率评分柱状图
+    var effChart=echarts.init(document.getElementById('chart-weekly-efficiency'),null,{{renderer:'canvas'}});
+    var effColors = chartData.daily_efficiencies.map(function(s) {{
+        if (s >= 70) return '#22c55e';
+        if (s >= 50) return '#eab308';
+        if (s >= 30) return '#f97316';
+        return '#ef4444';
+    }});
+    effChart.setOption({{
+        tooltip:{{trigger:'axis',axisPointer:{{type:'shadow'}},formatter:'{{b}}<br/>效率评分: {{c}}/100'}},
+        grid:{{left:'3%',right:'4%',bottom:'3%',top:'10%',containLabel:true}},
+        xAxis:{{type:'category',data:chartData.daily_dates,axisLabel:{{color:'rgba(255,255,255,0.4)',fontSize:11}},axisLine:{{lineStyle:{{color:'rgba(255,255,255,0.1)'}}}},axisTick:{{show:false}}}},
+        yAxis:{{type:'value',name:'评分',nameTextStyle:{{color:'rgba(255,255,255,0.3)',fontSize:10}},min:0,max:100,axisLabel:{{color:'rgba(255,255,255,0.4)'}},splitLine:{{lineStyle:{{color:'rgba(255,255,255,0.05)'}}}},axisLine:{{show:false}},axisTick:{{show:false}}}},
+        series:[{{
+            name:'效率评分',type:'bar',data:chartData.daily_efficiencies,
+            itemStyle:{{color:function(params) {{ return effColors[params.dataIndex]; }} }},
+            barWidth: '50%',
+            label:{{show:true,position:'top',color:'rgba(255,255,255,0.6)',fontSize:11,formatter:'{{c}}'}}
+        }}]
+    }});
+
+    window.addEventListener('resize',function(){{
+        pieChart.resize(); trendChart.resize(); stackChart.resize(); effChart.resize();
+    }});
 }})();
 </script>
 
